@@ -1,0 +1,16 @@
+# RStudio
+.Rproj.user/
+
+# R session
+.Rhistory
+.RData
+.Ruserdata
+
+# Raw data
+HSM_Data/
+
+# R Markdown outputs
+*_cache/
+*_files/
+*.html
+*.pdf

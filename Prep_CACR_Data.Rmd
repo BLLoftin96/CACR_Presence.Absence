@@ -1,0 +1,101 @@
+---
+title: "Preparing CACR Avian Surverys"
+author: "WLL"
+date: "2026-07-17"
+output: html_document
+---
+
+ GitHub Setup
+
+I am using GitHub as a form of version control, so I will need to connect this document to the repository on GitHub. While the version set up was already created in tandem to this document, RStudio will often require verification before you can push any committed changes to your code.
+
+**This section is only needed for those modifying code**
+
+```{r Git Setup, eval=FALSE, include = FALSE, message = FALSE, warning = FALSE}
+
+# We will need the usethis package so that we can connect our GitHub
+
+install.packages("usethis")
+library(usethis)
+
+# Using the usethis package we can tell R which user will be pushing new versions to the associated repository
+
+use_git_config(user.name = "BLLoftin96", user.email = "brittanieloftin@u.boisestate.edu")
+
+# This will show you who is logged in and will give you options following options: 1) Abort update with error, and keep the existing credentials, 2) Replace these credentials, and 3) See the password/token. If this is a fresh session, I would recommend the replace option and re-enter your current password/token to ensure there is no connection error. 
+
+gitcreds::gitcreds_set()
+
+# This will verify any changes
+
+gitcreds::gitcreds_get()
+
+```
+
+
+# Install Packages
+
+```{r Install Packages, eval = FALSE}
+pkg <- c("dplyr", "tidyr", "tidyverse", "readr", "stringr", "knitr", "rmarkdown", "bibtex", "knitcitations", "bookdown")
+print("Check if packages are installed")
+new.pkg <- pkg[!(pkg %in% installed.packages())]
+if(length(new.pkg) > 0){
+  print(paste("Install missing package(s):", new.pkg, sep=' '))
+  install.packages(new.pkg, dependencies = TRUE)
+}else{
+  print("All packages are already installed!")
+}
+print("Load packages and return status")
+sapply(pkg, require, character.only = TRUE)
+```
+
+# Load Libraries
+
+```{r Load Libraries}
+library(knitr)
+library(rmarkdown)
+library(dplyr)
+library(tidyr)
+library(bibtex)
+library(knitcitations)
+library(bookdown)
+library(tidyverse)
+library(readr)
+library(stringr)
+
+
+
+# Generate BibTex citation file for all R packages used to
+# produce report
+knitr::write_bib(.packages(), file = "packages.bib")
+```
+
+# Setup Directory
+
+```{r Setup Directory}
+datadir <- "R:/CACR_HSM_LiDAR/CACR_Presence.Absence"
+```
+
+# Background
+
+The Cassia Crossbill (*Loxia sinesciuris*) is Idaho's only endemic bird and is currently listed as a species of conservation concern. Cassia Crossbills are a unique species that are only found within the high elevation lodgepole pine forests of two mountain ranges of southern Idaho: South Hills and Albion Mountains (Benkman et al. 2009, Behl and Benkman 2018). Like most crossbills, the Cassia Crossbill has overlapping mandible that creating the crossed bill (hence the name) that are specialized to opening a specific type of conifer species or variety (Newton 1972, Benkman 1978a, Benkman 1978b, Benkman 1988a, Benkman 1988b, Benkman 1989, Benkman 1990, Benkman 1992, Benkman 1993, Benkman and Lindholm 1991). In the case of the Cassia Crossbill, they are specialized to feed on the seeds found within the serotinous cones of Rocky Mountain lodgepole pine (*Pinus contorta latifolia*) and are unable to survive competition with other crossbills for other seeds elsewhere (Benkman et al. 2001, Benkman et al. 2012, Benkman 2016). The dependency on a single resource makes the survival and reproduction of crossbills depend on the availability of that resource and they are thus extremely vulnerable to habitat loss and alteration (Newton 1972, Benkman 1987a, Benkman 1988a, Benkman 1990, Benkman 1992). Despite lodgepole pine existing in other areas, the Cassia Crossbill was able to evolve in this region due to the two mountain ranges completely lacking red squirrels (*Tamiasciurus hudsonicus*) which typically preemptively out compete crossbills for cones (Benkman 1999, Smith and Benkman 2007).
+
+With Cassia Crossbills being permanent residents confined to the highest elevations of these two mountain ranges, they are especially susceptible to the effects of anthropogenic climate change and have a high risk of declining population trends and extinction (Parmesan 2006). The combination of being a permanent resident in a restricted range and the dependence on serotinous cones of Rocky Mountain lodgepole pine make the Cassia Crossbill even more vulnerable to habitat loss or alteration compared to more widespread montane species (Benkman 1993). These alterations and habitat loss are predicted to occur under anthropogenic climate change as regional forecasts indicate dramatic shifts in plant distributions with a predicted 50% or greater loss in the distribution of lodgepole pine, including its extirpation from the Cassia Crossbill’s range by 2080 (Thompson et al. 1998, Coops and Waring 2011). Additionally, increasing summer temperatures have already been recorded as having a negative impact on Cassia Crossbills as it causes their primary food source, serotinous lodgepole cones, to prematurely open allowing other species to access this once exclusive food source (Benkman et al. 2001, Benkman et al. 2012, Santisteban et al. 2012, Benkman 2016). Cone crops have also been affected by the increase in fires in this area either through being directly destroyed or by causing cones to open and allowing other species to access the seeds. Fires will only become more problematic in the future as they are predicted to increase in frequency and intensity due to multiple interacting factors of climate change (Brice et al. 2020, Rogers et al. 2020).
+
+The Cassia Crossbill Working Group (CCWG) which formed in early 2021 from a partnership of 22 stakeholders including members from Boise State University Human-Environment Systems, Idaho Department of Fish and Game (IDFG), Intermountain Bird Observatory (IBO), the Sawtooth National Forest, the Shoshone-Bannock Tribes, and U.S Fish and Wildlife Service. The goal of the CCWG is to work collaboratively on conservation planning, habitat restoration, and long-term monitoring of the Cassia Crossbill. As part of IBO's agreement with the forest service and IDFG, annual surveys have been conducted since 2021 to estimate the population estimates using sites that had been used by Dr. Craig Benkman in his previous studies. However, one of the most needed products identified by managers part of the CCWG was a habitat suitability model (HSM) of the Cassia Crossbill.
+
+# Sampling Design
+
+To create an accurate HSM, surveys needed to be conducted across the ecological gradients of environments available to Cassia Crossbills which wasn't captured in the previous sampling scheme as areas were only sampling Lodgepole Pine designated areas by the Behl Model (Behl and Benkman 2018) or areas of "highest quality habitat" ascribed by Dr. Benkman. It was decided in 2023 that we needed to expand and refine our sampling scheme to get a more accurate model. Therefore, Ryan Healey from IBO set out to create a new lodgepole pine model to improve areas that were designated as lodgepole pine areas. Once the model was created we used GRTS to get a random stratified sample of these points and selected approximately 300 lodgepole pine sites for 2023 and followed a similar method to select approximately 50 non-lodgepole sites. In 2024, Ryan Healey used the data from 2023 to update the lodgepole model and, using the updated version, new sampling sites were selected in 2024 following the same protocol as 2023 for site selection.
+
+At each site, surveyors would conduct a 10-minute standardized survey broken into two 5-minute intervals noting any crossbills and woodpeckers seen or heard. If a bird was seen/heard, the surveyor would record the initial distance, bearing, interval, flock size, and whether the bird was perched or a flyover. We recorded whether the bird was perched or flying over because we want to ensure crossbills are actually using the habitat for the model to be accurate and crossbills are known to fly long distances to get to resources. Additionally, at each point vegetation surveys were conducted recording Integrated Monitoring in Bird Conservation Regions (IMBCR) standardized measurements within 50m of the point. Vegetation surveys included measurements of both canopy and understory to help gain an understanding of the habitat most suitable for CACR. **Currently, we have LiDAR data for the study areas from the Idaho LiDAR Consortium so we want to try to use this data as a way to infer forest metrics and determine if any forest structures influence the suitability of landscape for Cassia Crossbills.**
+
+# Goal
+
+Overall, we want to create two habitat suitability models (difference described below) that incorporate Cassia Crossbill presence/absence data collected during our annual surveys, forest metrics from the LiDAR data, and existing elevation metrics.
+
+1.  Conservative Model: Presence of Cassia Crossbills is only indicated by the presence of a perched bird being directly observed by a surveyor.
+
+2.  Liberal Model: Presence of Cassia Crossbills is indicated by either a perched bird observed by a surveyor AND/OR the siting of crossbill-opened serotinous lodgepole pine cones
+
+To complete this goal, we will need to use the 2023 and 2024 Cassia Crossbill surveys to build our model then use the 2025 summer and fall data to validate and update the model. We should, first, clean and sort the 2023 and 2024 data to create our two types of data frames (Conservative_Presence vs. Liberal_Presence) that will build the two models. Then, we will want to take the LiDAR data - which should only contain the tiles for our study area (*to see how this was made see the Study_Area_LiDAR_Setup*) - and validate the data to ensure it looks correct and makes sense. Once this is done, we will stitch the tiles together. Then, we will want to decide on our Forest metrics ensuring that they make biological sense and make rasters containing the metrics. We will want to gather any other spatial data or rasters (e.g., elevation, slope, aspect) and generate a raster stack for our model. Finally, we can create our two habitat suitability models and test how accurate it is.

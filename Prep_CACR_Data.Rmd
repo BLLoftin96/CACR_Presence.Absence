@@ -70,10 +70,17 @@ library(stringr)
 knitr::write_bib(.packages(), file = "packages.bib")
 ```
 
-# Setup Directory
+# Setup 
 
-```{r Setup Directory}
-datadir <- "R:/CACR_HSM_LiDAR/CACR_Presence.Absence"
+```{r Setup }
+#### Setup ####
+# Define the project, input data, and cleaned output directories
+
+project_dir <- "R:/CACR_HSM_LiDAR/CACR_Presence.Absence"
+data_dir <- file.path(project_dir, "HSM_Data")
+output_dir <- file.path(project_dir, "Cleaned_Data")
+
+dir.create(output_dir, showWarnings = FALSE)
 ```
 
 # Background
@@ -99,3 +106,42 @@ Overall, we want to create two habitat suitability models (difference described 
 2.  Liberal Model: Presence of Cassia Crossbills is indicated by either a perched bird observed by a surveyor AND/OR the siting of crossbill-opened serotinous lodgepole pine cones
 
 To complete this goal, we will need to use the 2023 and 2024 Cassia Crossbill surveys to build our model then use the 2025 summer and fall data to validate and update the model. We should, first, clean and sort the 2023 and 2024 data to create our two types of data frames (Conservative_Presence vs. Liberal_Presence) that will build the two models. Then, we will want to take the LiDAR data - which should only contain the tiles for our study area (*to see how this was made see the Study_Area_LiDAR_Setup*) - and validate the data to ensure it looks correct and makes sense. Once this is done, we will stitch the tiles together. Then, we will want to decide on our Forest metrics ensuring that they make biological sense and make rasters containing the metrics. We will want to gather any other spatial data or rasters (e.g., elevation, slope, aspect) and generate a raster stack for our model. Finally, we can create our two habitat suitability models and test how accurate it is.
+
+
+```{r 2023 Bird Survey}
+#### Clean 2023 Bird Survey Data ####
+# Read the 2023 point-count data, standardize fields, and check CACR coding discrepancies
+
+counts_2023 <- read_csv(
+  file.path(data_dir, "2023", "CACRCounts2023.csv"),
+  show_col_types = FALSE
+) |>
+  transmute(
+    Site = `Survey Point Number`,
+    Date,
+    Species = str_trim(str_to_upper(Species)),
+    Distance = `Initial Distance`,
+    Detection_Type = str_trim(str_to_upper(`Perched or Flyover`)),
+    CACR_Field = str_trim(str_to_upper(`Any Cassia Crossbills Detected`)),
+    x,
+    y
+  ) |>
+  mutate(
+    CACR_Record = Species == "CACR"
+  )
+
+cacr_check_2023 <- counts_2023 |>
+  group_by(Site) |>
+  summarise(
+    CACR_in_Species = any(CACR_Record, na.rm = TRUE),
+    CACR_Field_Yes = any(CACR_Field == "YES", na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  filter(CACR_in_Species != CACR_Field_Yes)
+
+cacr_check_2023
+
+sort(unique(counts_2023$Detection_Type))
+sort(unique(counts_2023$Species))
+```
+

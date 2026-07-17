@@ -81,6 +81,13 @@ data_dir <- file.path(project_dir, "HSM_Data")
 output_dir <- file.path(project_dir, "Cleaned_Data")
 
 dir.create(output_dir, showWarnings = FALSE)
+
+#### Create Output Folders ####
+dir.create(file.path(output_dir, "Presence_Data"),
+           showWarnings = FALSE)
+
+dir.create(file.path(output_dir, "Summaries"),
+           showWarnings = FALSE)
 ```
 
 # Background
@@ -107,11 +114,15 @@ Overall, we want to create two habitat suitability models (difference described 
 
 To complete this goal, we will need to use the 2023 and 2024 Cassia Crossbill surveys to build our model then use the 2025 summer and fall data to validate and update the model. We should, first, clean and sort the 2023 and 2024 data to create our two types of data frames (Conservative_Presence vs. Liberal_Presence) that will build the two models. Then, we will want to take the LiDAR data - which should only contain the tiles for our study area (*to see how this was made see the Study_Area_LiDAR_Setup*) - and validate the data to ensure it looks correct and makes sense. Once this is done, we will stitch the tiles together. Then, we will want to decide on our Forest metrics ensuring that they make biological sense and make rasters containing the metrics. We will want to gather any other spatial data or rasters (e.g., elevation, slope, aspect) and generate a raster stack for our model. Finally, we can create our two habitat suitability models and test how accurate it is.
 
+# Data Cleaning
 
-```{r 2023 Bird Survey}
-#### Clean 2023 Bird Survey Data ####
-# Read the 2023 point-count data, standardize fields, and check CACR coding discrepancies
+## 2023
 
+```{r Clean and Classify 2023 Survey Data}
+# Clean 2023 bird observations, create strict and liberal presence datasets, and evaluate how a 50 m cutoff would affect perched CACR detections
+# We cannot be certain that techs entered both species type and detection of CACR (yes or no) correctly every time - I expect some human error.
+
+#### Load Data ####
 counts_2023 <- read_csv(
   file.path(data_dir, "2023", "CACRCounts2023.csv"),
   show_col_types = FALSE
@@ -122,26 +133,262 @@ counts_2023 <- read_csv(
     Species = str_trim(str_to_upper(Species)),
     Distance = `Initial Distance`,
     Detection_Type = str_trim(str_to_upper(`Perched or Flyover`)),
-    CACR_Field = str_trim(str_to_upper(`Any Cassia Crossbills Detected`)),
     x,
     y
   ) |>
   mutate(
-    CACR_Record = Species == "CACR"
+    Strict_Detection = Species == "CACR" &
+      Detection_Type == "PERCHED"
   )
 
-cacr_check_2023 <- counts_2023 |>
+veg_raw_2023 <- read_csv(
+  file.path(data_dir, "2023", "veg.csv"),
+  show_col_types = FALSE,
+  name_repair = "unique"
+)
+
+#### Strict 2023 Presence Data ####
+
+strict_2023 <- counts_2023 |>
   group_by(Site) |>
   summarise(
-    CACR_in_Species = any(CACR_Record, na.rm = TRUE),
-    CACR_Field_Yes = any(CACR_Field == "YES", na.rm = TRUE),
+    x = first(x[!is.na(x)], default = NA_real_),
+    y = first(y[!is.na(y)], default = NA_real_),
+
+    Strict_Presence = as.integer(
+      any(Strict_Detection, na.rm = TRUE)
+    ),
+
+    Min_Perched_Distance = if (
+      any(Strict_Detection & !is.na(Distance), na.rm = TRUE)
+    ) {
+      min(
+        Distance[Strict_Detection & !is.na(Distance)],
+        na.rm = TRUE
+      )
+    } else {
+      NA_real_
+    },
+
+    Strict_Presence_50m = case_when(
+      !any(Strict_Detection, na.rm = TRUE) ~ 0L,
+
+      any(
+        Strict_Detection &
+          !is.na(Distance) &
+          Distance <= 50,
+        na.rm = TRUE
+      ) ~ 1L,
+
+      any(
+        Strict_Detection &
+          !is.na(Distance),
+        na.rm = TRUE
+      ) ~ 0L,
+
+      TRUE ~ NA_integer_
+    ),
+
     .groups = "drop"
   ) |>
-  filter(CACR_in_Species != CACR_Field_Yes)
+  mutate(
+    Changed_By_50m = Strict_Presence == 1 &
+      Strict_Presence_50m == 0
+  )
 
-cacr_check_2023
 
-sort(unique(counts_2023$Detection_Type))
-sort(unique(counts_2023$Species))
+#### 2023 Liberal Presence Data ####
+# Identify crossbill-foraged cones on any sampled branch and combine that evidence with perched CACR detections
+
+cone_foraging_columns_2023 <- names(veg_raw_2023)[
+  str_detect(
+    names(veg_raw_2023),
+    regex(
+      "^Branch [1-5] Percent Cones Foraged",
+      ignore_case = TRUE
+    )
+  )
+]
+
+cat(
+  "Crossbill-foraging branch columns found:",
+  length(cone_foraging_columns_2023),
+  "\n"
+)
+
+cone_evidence_2023 <- veg_raw_2023 |>
+  transmute(
+    Site = `Survey Point Number`,
+
+    Cone_Evidence = if_any(
+      all_of(cone_foraging_columns_2023),
+      ~ !is.na(.x) & .x > 0
+    )
+  ) |>
+  group_by(Site) |>
+  summarise(
+    Cone_Evidence = any(Cone_Evidence, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+liberal_2023 <- strict_2023 |>
+  left_join(
+    cone_evidence_2023,
+    by = "Site"
+  ) |>
+  mutate(
+    Cone_Evidence = replace_na(
+      Cone_Evidence,
+      FALSE
+    ),
+
+    Liberal_Presence = as.integer(
+      Strict_Presence == 1 |
+        Cone_Evidence
+    ),
+
+    Presence_Evidence = case_when(
+      Strict_Presence == 1 & Cone_Evidence ~
+        "Perched CACR and cone evidence",
+
+      Strict_Presence == 1 ~
+        "Perched CACR only",
+
+      Cone_Evidence ~
+        "Cone evidence only",
+
+      TRUE ~
+        "No presence evidence"
+    )
+  )
+
+
+#### Summarize 2023 Presence Classifications ####
+# Report strict and liberal presence counts and the type of evidence supporting each liberal presence classification
+
+cat("Total survey sites:", nrow(liberal_2023), "\n")
+
+cat(
+  "Strict presences:",
+  sum(liberal_2023$Strict_Presence, na.rm = TRUE),
+  "\n"
+)
+
+cat(
+  "Strict absences:",
+  sum(liberal_2023$Strict_Presence == 0, na.rm = TRUE),
+  "\n"
+)
+
+cat(
+  "Liberal presences:",
+  sum(liberal_2023$Liberal_Presence, na.rm = TRUE),
+  "\n"
+)
+
+cat(
+  "Liberal absences:",
+  sum(liberal_2023$Liberal_Presence == 0, na.rm = TRUE),
+  "\n"
+)
+
+print(
+  liberal_2023 |>
+    count(
+      Presence_Evidence,
+      name = "Sites"
+    )
+)
+
+
+#### Evaluate 2023 50 m Detection Cutoff ####
+# Summarize individual perched CACR detections and site classifications with and without a 50 m cutoff
+
+perched_detection_50m_summary_2023 <- counts_2023 |>
+  filter(Strict_Detection) |>
+  mutate(
+    Distance_Category = case_when(
+      is.na(Distance) ~ "Missing distance",
+      Distance <= 50 ~ "Within 50 m",
+      Distance > 50 ~ "Beyond 50 m"
+    )
+  ) |>
+  count(
+    Distance_Category,
+    name = "Detections"
+  ) |>
+  mutate(
+    Survey_Period = "2023",
+    .before = 1
+  )
+
+strict_site_50m_summary_2023 <- strict_2023 |>
+  summarise(
+    Survey_Period = "2023",
+
+    Strict_Presence_No_Cutoff = sum(
+      Strict_Presence,
+      na.rm = TRUE
+    ),
+
+    Strict_Presence_Within_50m = sum(
+      Strict_Presence_50m == 1,
+      na.rm = TRUE
+    ),
+
+    Sites_Removed_By_50m = sum(
+      Changed_By_50m,
+      na.rm = TRUE
+    ),
+
+    Sites_With_Missing_Perched_Distance = sum(
+      Strict_Presence == 1 &
+        is.na(Strict_Presence_50m),
+      na.rm = TRUE
+    )
+  )
+
+print(perched_detection_50m_summary_2023)
+print(strict_site_50m_summary_2023)
+
+#### Save 2023 Outputs ####
+# Write cleaned 2023 datasets and summaries to CSV files
+
+write_csv(
+  strict_2023,
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Strict_Presence_2023.csv"
+  )
+)
+
+write_csv(
+  liberal_2023,
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Liberal_Presence_2023.csv"
+  )
+)
+
+write_csv(
+  perched_detection_50m_summary_2023,
+  file.path(
+    output_dir,
+    "Summaries",
+    "Detection_50m_Summary_2023.csv"
+  )
+)
+
+write_csv(
+  strict_site_50m_summary_2023,
+  file.path(
+    output_dir,
+    "Summaries",
+    "Site_50m_Summary_2023.csv"
+  )
+)
 ```
 
+Applying the 50m cutoff would remove 18 sites or 34.6% of the strict data.

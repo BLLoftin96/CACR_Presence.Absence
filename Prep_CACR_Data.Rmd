@@ -5,7 +5,7 @@ date: "2026-07-17"
 output: html_document
 ---
 
- GitHub Setup
+# GitHub Setup
 
 I am using GitHub as a form of version control, so I will need to connect this document to the repository on GitHub. While the version set up was already created in tandem to this document, RStudio will often require verification before you can push any committed changes to your code.
 
@@ -36,7 +36,7 @@ gitcreds::gitcreds_get()
 # Install Packages
 
 ```{r Install Packages, eval = FALSE}
-pkg <- c("dplyr", "tidyr", "tidyverse", "readr", "stringr", "knitr", "rmarkdown", "bibtex", "knitcitations", "bookdown")
+pkg <- c("dplyr", "tidyr", "tidyverse", "readr", "stringr", "knitr", "rmarkdown", "bibtex", "knitcitations", "bookdown", "sf")
 print("Check if packages are installed")
 new.pkg <- pkg[!(pkg %in% installed.packages())]
 if(length(new.pkg) > 0){
@@ -62,7 +62,7 @@ library(bookdown)
 library(tidyverse)
 library(readr)
 library(stringr)
-
+library(sf)
 
 
 # Generate BibTex citation file for all R packages used to
@@ -678,8 +678,316 @@ Removing detections over 50m would remove ~31% of the presence strict data.
 
 ### Summer
 
-```{rClean and Classify Summer 2025 Survey Data}
+```{r Clean and Classify Summer 2025 Survey Data}
+# I noticed a duplicate site ID for MAC-124 but in different areas, so I will be using a shapefile to validate if this is a typo
 
+# Load Summer 2025 survey and cone data, compare duplicate MAC-124 records with official site locations, and correct site-ID typos
+# Survey IDs omit the trailing "-D" used in the official shapefile nomenclature (for example, LPO-004 versus LPO-004-D).
+
+#### Load Summer 2025 Data and Check MAC-124 ####
+
+survey_summer_2025 <- read_csv(
+  file.path(
+    data_dir,
+    "2025",
+    "Summer",
+    "2025_CACR_Summer_Survey.csv"
+  ),
+  show_col_types = FALSE
+)
+
+cone_counts_summer_2025 <- read_csv(
+  file.path(
+    data_dir,
+    "2025",
+    "Summer",
+    "2025_Summer_Cone_Counts.csv"
+  ),
+  show_col_types = FALSE
+)
+
+cone_survey_summer_2025 <- read_csv(
+  file.path(
+    data_dir,
+    "2025",
+    "Summer",
+    "2025_Summer_Cone_Survey.csv"
+  ),
+  show_col_types = FALSE
+)
+
+logger_cones_summer_2025 <- read_csv(
+  file.path(
+    data_dir,
+    "2025",
+    "Summer",
+    "2025_Cone_Surveys_Logger_Already_Deployed.csv"
+  ),
+  show_col_types = FALSE
+)
+
+
+# Replace this filename with the official survey-site shapefile name
+
+site_shapefile <- file.path(
+  project_dir,
+  "Thermologger_Deployment_Locations_2025.shp"
+)
+
+official_sites_raw <- st_read(
+  site_shapefile,
+  quiet = TRUE
+)
+
+
+# Replace this value only if the official site-ID field has a different name
+
+site_id_field <- "name"
+
+if (!site_id_field %in% names(official_sites_raw)) {
+  stop(
+    paste0(
+      "The field '",
+      site_id_field,
+      "' was not found in the shapefile.\n",
+      "Available fields are:\n",
+      paste(names(official_sites_raw), collapse = ", ")
+    )
+  )
+}
+
+if (is.na(st_crs(official_sites_raw))) {
+  stop(
+    "The official site shapefile does not have a defined coordinate reference system."
+  )
+}
+
+
+# Standardize official IDs by removing the trailing "-D" used only in the shapefile
+
+official_sites <- official_sites_raw |>
+  mutate(
+    Official_Site_Full = str_trim(
+      str_to_upper(
+        as.character(.data[[site_id_field]])
+      )
+    ),
+
+    Official_Site = str_remove(
+      Official_Site_Full,
+      "-D$"
+    )
+  ) |>
+  filter(
+    !is.na(Official_Site),
+    Official_Site != ""
+  )
+
+
+# Locate the records entered as MAC-124
+
+mac124_records <- survey_summer_2025 |>
+  mutate(
+    Survey_Row = row_number(),
+
+    Recorded_Site = str_trim(
+      str_to_upper(
+        as.character(`Survey Point Number`)
+      )
+    )
+  ) |>
+  filter(
+    Recorded_Site == "MAC-124"
+  )
+
+cat(
+  "Records entered as MAC-124:",
+  nrow(mac124_records),
+  "\n"
+)
+
+if (nrow(mac124_records) != 2) {
+  warning(
+    paste0(
+      "Expected two records entered as MAC-124 but found ",
+      nrow(mac124_records),
+      ". The location check will still continue."
+    )
+  )
+}
+
+
+# Convert the survey coordinates to spatial points and match each MAC-124 record to the nearest official survey location
+
+mac124_points <- mac124_records |>
+  filter(
+    !is.na(x),
+    !is.na(y)
+  ) |>
+  st_as_sf(
+    coords = c("x", "y"),
+    crs = 4326,
+    remove = FALSE
+  ) |>
+  st_transform(
+    st_crs(official_sites)
+  )
+
+nearest_official_row <- st_nearest_feature(
+  mac124_points,
+  official_sites
+)
+
+mac124_location_check <- mac124_points |>
+  mutate(
+    Nearest_Official_Site_Full =
+      official_sites$Official_Site_Full[
+        nearest_official_row
+      ],
+
+    Nearest_Official_Site =
+      official_sites$Official_Site[
+        nearest_official_row
+      ],
+
+    Distance_to_Official_Site_m = as.numeric(
+      st_distance(
+        mac124_points,
+        official_sites[
+          nearest_official_row,
+        ],
+        by_element = TRUE
+      )
+    ),
+
+    Site_ID_Matches_Location =
+      Recorded_Site == Nearest_Official_Site
+  ) |>
+  st_drop_geometry() |>
+  select(
+    Survey_Row,
+    `Date and Time`,
+    Recorded_Site,
+    Nearest_Official_Site,
+    Nearest_Official_Site_Full,
+    Distance_to_Official_Site_m,
+    Site_ID_Matches_Location,
+    x,
+    y,
+    everything()
+  )
+
+print(
+  mac124_location_check |>
+    select(
+      Survey_Row,
+      `Date and Time`,
+      Recorded_Site,
+      Nearest_Official_Site,
+      Nearest_Official_Site_Full,
+      Distance_to_Official_Site_m,
+      Site_ID_Matches_Location,
+      x,
+      y
+    )
+)
+
+
+# Automatically correct a MAC-124 record only when:
+# 1. its nearest official site has a different ID, and
+# 2. the recorded coordinates are within 250 m of that official point.
+#
+# Records farther than 250 m are retained unchanged and flagged for manual review.
+
+max_match_distance_m <- 250
+
+mac124_corrections <- mac124_location_check |>
+  transmute(
+    Survey_Row,
+
+    Corrected_Site = case_when(
+      Nearest_Official_Site != Recorded_Site &
+        Distance_to_Official_Site_m <=
+          max_match_distance_m ~
+        Nearest_Official_Site,
+
+      TRUE ~
+        Recorded_Site
+    ),
+
+    Site_ID_Corrected =
+      Corrected_Site != Recorded_Site,
+
+    Requires_Manual_Review =
+      Distance_to_Official_Site_m >
+        max_match_distance_m
+  )
+
+
+survey_summer_2025 <- survey_summer_2025 |>
+  mutate(
+    Survey_Row = row_number(),
+
+    Site_Originally_Recorded = str_trim(
+      str_to_upper(
+        as.character(`Survey Point Number`)
+      )
+    )
+  ) |>
+  left_join(
+    mac124_corrections,
+    by = "Survey_Row"
+  ) |>
+  mutate(
+    Corrected_Site = coalesce(
+      Corrected_Site,
+      Site_Originally_Recorded
+    ),
+
+    Site_ID_Corrected = replace_na(
+      Site_ID_Corrected,
+      FALSE
+    ),
+
+    Requires_Manual_Review = replace_na(
+      Requires_Manual_Review,
+      FALSE
+    ),
+
+    `Survey Point Number` = Corrected_Site
+  ) |>
+  select(
+    -Survey_Row,
+    -Corrected_Site
+  )
+
+
+# Show any changes made to the original survey records
+
+mac124_correction_summary <- survey_summer_2025 |>
+  filter(
+    Site_Originally_Recorded == "MAC-124"
+  ) |>
+  select(
+    `Date and Time`,
+    Site_Originally_Recorded,
+    Corrected_Site = `Survey Point Number`,
+    Site_ID_Corrected,
+    Requires_Manual_Review,
+    x,
+    y
+  )
+
+print(mac124_correction_summary)
+
+cat(
+  "MAC-124 records corrected:",
+  sum(
+    mac124_correction_summary$Site_ID_Corrected,
+    na.rm = TRUE
+  ),
+  "\n"
+)
 ```
 
 

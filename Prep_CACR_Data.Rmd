@@ -393,6 +393,230 @@ write_csv(
 
 Applying the 50m cutoff would remove 18 sites or 34.6% of the strict data.
 
+```{r 2023 QA - Validate Presence}
+#### Perched Check ####
+expected_strict_2023 <- counts_2023 |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Expected_Strict_Presence = as.integer(
+      any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED",
+        na.rm = TRUE
+      )
+    ),
+
+    Expected_Strict_Presence_50m = case_when(
+      !any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED",
+        na.rm = TRUE
+      ) ~
+        0L,
+
+      any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED" &
+          !is.na(Distance) &
+          Distance <= 50,
+        na.rm = TRUE
+      ) ~
+        1L,
+
+      any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED" &
+          !is.na(Distance),
+        na.rm = TRUE
+      ) ~
+        0L,
+
+      TRUE ~
+        NA_integer_
+    ),
+
+    .groups = "drop"
+  )
+
+
+strict_classification_qa_2023 <- strict_2023 |>
+  select(
+    Site,
+    Recorded_Strict_Presence = Strict_Presence,
+    Recorded_Strict_Presence_50m = Strict_Presence_50m
+  ) |>
+  full_join(
+    expected_strict_2023,
+    by = "Site"
+  ) |>
+  mutate(
+    Strict_Classification_Matches =
+      Recorded_Strict_Presence ==
+      Expected_Strict_Presence,
+
+    Strict_50m_Classification_Matches =
+      case_when(
+        is.na(Recorded_Strict_Presence_50m) &
+          is.na(Expected_Strict_Presence_50m) ~
+          TRUE,
+
+        TRUE ~
+          Recorded_Strict_Presence_50m ==
+          Expected_Strict_Presence_50m
+      )
+  )
+
+
+strict_classification_errors_2023 <-
+  strict_classification_qa_2023 |>
+  filter(
+    is.na(Strict_Classification_Matches) |
+      !Strict_Classification_Matches |
+      is.na(Strict_50m_Classification_Matches) |
+      !Strict_50m_Classification_Matches
+  )
+
+
+cat(
+  "2023 sites with incorrect strict or 50 m classifications:",
+  nrow(
+    strict_classification_errors_2023
+  ),
+  "\n"
+)
+
+print(
+  strict_classification_errors_2023
+)
+
+
+if (nrow(strict_classification_errors_2023) > 0) {
+  stop(
+    "The 2023 strict dataset does not fully match the perched-CACR detection records."
+  )
+}
+
+#### Flyover Check ####
+flyover_only_sites_2023 <- counts_2023 |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Has_CACR_Flyover = any(
+      Species == "CACR" &
+        Detection_Type == "FLYOVER",
+      na.rm = TRUE
+    ),
+
+    Has_Perched_CACR = any(
+      Species == "CACR" &
+        Detection_Type == "PERCHED",
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  ) |>
+  filter(
+    Has_CACR_Flyover,
+    !Has_Perched_CACR
+  ) |>
+  left_join(
+    strict_2023 |>
+      select(
+        Site,
+        Strict_Presence
+      ),
+    by = "Site"
+  )
+
+
+incorrect_flyover_only_sites_2023 <-
+  flyover_only_sites_2023 |>
+  filter(
+    Strict_Presence != 0 |
+      is.na(Strict_Presence)
+  )
+
+
+cat(
+  "2023 flyover-only CACR sites:",
+  nrow(
+    flyover_only_sites_2023
+  ),
+  "\n"
+)
+
+print(
+  flyover_only_sites_2023
+)
+
+cat(
+  "Flyover-only sites incorrectly classified as strict presence:",
+  nrow(
+    incorrect_flyover_only_sites_2023
+  ),
+  "\n"
+)
+
+print(
+  incorrect_flyover_only_sites_2023
+)
+
+
+if (nrow(incorrect_flyover_only_sites_2023) > 0) {
+  stop(
+    "At least one 2023 flyover-only CACR site is incorrectly classified as a strict presence."
+  )
+}
+
+#### QA 2023 Liberal Presence Classification ####
+# Confirm that liberal presence equals perched CACR presence OR cone evidence.
+
+liberal_classification_errors_2023 <- liberal_2023 |>
+  mutate(
+    Expected_Liberal_Presence = as.integer(
+      Strict_Presence == 1 |
+        Cone_Evidence
+    )
+  ) |>
+  filter(
+    is.na(Liberal_Presence) |
+      Liberal_Presence != Expected_Liberal_Presence
+  )
+
+
+cat(
+  "2023 sites with incorrect liberal classifications:",
+  nrow(
+    liberal_classification_errors_2023
+  ),
+  "\n"
+)
+
+print(
+  liberal_classification_errors_2023
+)
+
+
+if (nrow(liberal_classification_errors_2023) > 0) {
+  stop(
+    "The 2023 liberal dataset does not match strict presence plus cone evidence."
+  )
+}
+
+
+cat(
+  "\n2023 presence QA passed.\n",
+  "Strict presence matches perched CACR detections.\n",
+  "Flyover-only sites are not strict presences.\n",
+  "The 50 m classifications match perched detection distances.\n",
+  "Liberal presence matches strict presence or cone evidence.\n"
+)
+```
+
+
 ## 2024
 
 ```{r Clean and Classify 2024 Survey Data}
@@ -672,6 +896,10 @@ write_csv(
 )
 ```
 Removing detections over 50m would remove ~31% of the presence strict data.
+
+```{r 2024 QA}
+
+```
 
 
 ## 2025

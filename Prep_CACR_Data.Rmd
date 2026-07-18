@@ -3230,6 +3230,599 @@ cat(
 
 
 ```
-
+50m restriction would lose ~15% of data.
 
 ### Fall
+
+```{r Clean and Classify Fall 2025 Survey Data}
+#### Load Fall 2025 Data ####
+# Load Fall 2025 bird observations and tree-level lodgepole cone surveys.
+
+bird_raw_fall_2025 <- read_csv(
+  file.path(
+    data_dir,
+    "2025",
+    "Fall",
+    "Fall_2025_CACR_Bird_Surveys.csv"
+  ),
+  show_col_types = FALSE
+)
+
+cone_raw_fall_2025 <- read_csv(
+  file.path(
+    data_dir,
+    "2025",
+    "Fall",
+    "2025_Fall_Lodgepole_Cone_Survey.csv"
+  ),
+  show_col_types = FALSE,
+  name_repair = "unique"
+)
+
+#### Clean Fall 2025 Bird Survey Data ####
+# Clean individual bird observations.
+#
+# Strict detections require:
+# 1. Species recorded as CACR
+# 2. Detection recorded as PERCHED
+#
+# Flyover CACR detections do not count as strict presence.
+
+counts_fall_2025 <- bird_raw_fall_2025 |>
+  transmute(
+    Site = str_trim(
+      str_to_upper(
+        as.character(`Survey Point Number`)
+      )
+    ),
+
+    Date_Time = `Date and Time`,
+
+    Species = str_trim(
+      str_to_upper(
+        as.character(`Observed Species`)
+      )
+    ),
+
+    Distance = as.numeric(
+      `Initial Distance`
+    ),
+
+    Detection_Type = str_trim(
+      str_to_upper(
+        as.character(`Perched or Flyover`)
+      )
+    ),
+
+    Flock_Size = `Flock Size`,
+
+    x,
+    y
+  ) |>
+  mutate(
+    Strict_Detection =
+      Species == "CACR" &
+      Detection_Type == "PERCHED"
+  )
+
+#### Strict Fall 2025 Presence Data ####
+# A site is a strict presence when at least one CACR was recorded as perched.
+
+strict_fall_2025 <- counts_fall_2025 |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    x = first(
+      x[!is.na(x)],
+      default = NA_real_
+    ),
+
+    y = first(
+      y[!is.na(y)],
+      default = NA_real_
+    ),
+
+    Survey_Visits = n_distinct(
+      Date_Time
+    ),
+
+    Strict_Presence = as.integer(
+      any(
+        Strict_Detection,
+        na.rm = TRUE
+      )
+    ),
+
+    Min_Perched_Distance = if (
+      any(
+        Strict_Detection &
+          !is.na(Distance),
+        na.rm = TRUE
+      )
+    ) {
+      min(
+        Distance[
+          Strict_Detection &
+            !is.na(Distance)
+        ],
+        na.rm = TRUE
+      )
+    } else {
+      NA_real_
+    },
+
+    Strict_Presence_50m = case_when(
+      !any(
+        Strict_Detection,
+        na.rm = TRUE
+      ) ~
+        0L,
+
+      any(
+        Strict_Detection &
+          !is.na(Distance) &
+          Distance <= 50,
+        na.rm = TRUE
+      ) ~
+        1L,
+
+      any(
+        Strict_Detection &
+          !is.na(Distance),
+        na.rm = TRUE
+      ) ~
+        0L,
+
+      TRUE ~
+        NA_integer_
+    ),
+
+    .groups = "drop"
+  ) |>
+  mutate(
+    Changed_By_50m =
+      Strict_Presence == 1 &
+      Strict_Presence_50m == 0
+  ) |>
+  arrange(
+    Site
+  )
+
+#### Create Fall 2025 Cone Evidence ####
+# Identify crossbill-foraged cones on any sampled branch. Only lodgepole trees recorded as being within the site are evaluated.
+
+cone_foraging_columns_fall_2025 <- names(
+  cone_raw_fall_2025
+)[
+  str_detect(
+    names(cone_raw_fall_2025),
+    regex(
+      "^% Crossbill Foraged Cones on Branch [1-5]$",
+      ignore_case = TRUE
+    )
+  )
+]
+
+
+cat(
+  "Crossbill-foraging branch columns found:",
+  length(cone_foraging_columns_fall_2025),
+  "\n"
+)
+
+print(
+  cone_foraging_columns_fall_2025
+)
+
+
+cone_evidence_fall_2025 <- cone_raw_fall_2025 |>
+  mutate(
+    Site = str_trim(
+      str_to_upper(
+        as.character(`Survey Point`)
+      )
+    ),
+
+    Lodgepole_Within_Site =
+      str_trim(
+        str_to_upper(
+          as.character(`Is this lodgepole within site?`)
+        )
+      ) == "YES"
+  ) |>
+  mutate(
+    across(
+      all_of(cone_foraging_columns_fall_2025),
+      as.numeric
+    )
+  ) |>
+  mutate(
+    Tree_Cone_Evidence =
+      Lodgepole_Within_Site &
+      if_any(
+        all_of(cone_foraging_columns_fall_2025),
+        ~ !is.na(.x) & .x > 0
+      )
+  ) |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Trees_Recorded = n(),
+
+    Trees_Within_Site = sum(
+      Lodgepole_Within_Site,
+      na.rm = TRUE
+    ),
+
+    Trees_With_Cone_Evidence = sum(
+      Tree_Cone_Evidence,
+      na.rm = TRUE
+    ),
+
+    Cone_Evidence = any(
+      Tree_Cone_Evidence,
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  )
+
+#### Liberal Fall 2025 Presence Data ####
+# Liberal presence requires either:
+# 1. at least one perched CACR detection, or 2. crossbill-foraged cone evidence.
+#
+# Sites without a matching cone-survey record are classified from the bird survey alone and identified as "No matching cone survey record."
+
+liberal_fall_2025 <- strict_fall_2025 |>
+  left_join(
+    cone_evidence_fall_2025,
+    by = "Site"
+  ) |>
+  mutate(
+    Cone_Survey_Status = case_when(
+      is.na(Trees_Recorded) ~
+        "No matching cone survey record",
+
+      Trees_Within_Site == 0 ~
+        "No lodgepole recorded within site",
+
+      TRUE ~
+        "Cone survey completed"
+    ),
+
+    Cone_Evidence = replace_na(
+      Cone_Evidence,
+      FALSE
+    ),
+
+    Liberal_Presence = as.integer(
+      Strict_Presence == 1 |
+        Cone_Evidence
+    ),
+
+    Presence_Evidence = case_when(
+      Strict_Presence == 1 &
+        Cone_Evidence ~
+        "Perched CACR and cone evidence",
+
+      Strict_Presence == 1 &
+        Cone_Survey_Status ==
+          "No matching cone survey record" ~
+        "Perched CACR; classified from bird survey only",
+
+      Strict_Presence == 1 ~
+        "Perched CACR only",
+
+      Cone_Evidence ~
+        "Cone evidence only",
+
+      Cone_Survey_Status ==
+        "No matching cone survey record" ~
+        "No perched CACR; no matching cone survey record",
+
+      Cone_Survey_Status ==
+        "No lodgepole recorded within site" ~
+        "No perched CACR; no lodgepole recorded within site",
+
+      TRUE ~
+        "No presence evidence"
+    )
+  ) |>
+  arrange(
+    Site
+  )
+
+#### Summarize Fall 2025 Presence Classifications ####
+# Report strict and liberal presence counts and evidence categories.
+
+cat(
+  "Total survey sites:",
+  nrow(liberal_fall_2025),
+  "\n"
+)
+
+cat(
+  "Strict presences:",
+  sum(
+    liberal_fall_2025$Strict_Presence,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Strict absences:",
+  sum(
+    liberal_fall_2025$Strict_Presence == 0,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Liberal presences:",
+  sum(
+    liberal_fall_2025$Liberal_Presence,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Liberal absences:",
+  sum(
+    liberal_fall_2025$Liberal_Presence == 0,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+print(
+  liberal_fall_2025 |>
+    count(
+      Presence_Evidence,
+      name = "Sites"
+    )
+)
+
+
+print(
+  liberal_fall_2025 |>
+    count(
+      Cone_Survey_Status,
+      name = "Sites"
+    )
+)
+
+# Let's change this so our 'unmatched cone data' reflects that these were locations with no LP
+#### Update Fall 2025 Cone Survey Status ####
+# Bird-survey sites without tree-level cone records represent intentional non-lodgepole sampling sites rather than missing cone-survey data.
+
+liberal_fall_2025 <- liberal_fall_2025 |>
+  mutate(
+    Cone_Survey_Status = case_when(
+      Cone_Survey_Status == "No matching cone survey record" ~
+        "Non-lodgepole site; no cone survey required",
+
+      TRUE ~
+        Cone_Survey_Status
+    ),
+
+    Presence_Evidence = case_when(
+      Strict_Presence == 1 &
+        Cone_Survey_Status ==
+          "Non-lodgepole site; no cone survey required" ~
+        "Perched CACR at non-lodgepole site",
+
+      Strict_Presence == 0 &
+        Cone_Survey_Status ==
+          "Non-lodgepole site; no cone survey required" ~
+        "No perched CACR at non-lodgepole site",
+
+      TRUE ~
+        Presence_Evidence
+    )
+  )
+
+print(
+  liberal_fall_2025 |>
+    count(
+      Presence_Evidence,
+      name = "Sites"
+    )
+)
+
+
+print(
+  liberal_fall_2025 |>
+    count(
+      Cone_Survey_Status,
+      name = "Sites"
+    )
+)
+
+#### Save Fall 2025 Presence Outputs ####
+# Save the cleaned observation-level bird data and the final strict and liberal site-level presence datasets.
+
+write_csv(
+  counts_fall_2025,
+  file.path(
+    output_dir,
+    "Fall_2025_CACR_Bird_Detections_Clean.csv"
+  )
+)
+
+
+write_csv(
+  strict_fall_2025,
+  file.path(
+    output_dir,
+    "Fall_2025_Strict_Presence.csv"
+  )
+)
+
+
+write_csv(
+  liberal_fall_2025,
+  file.path(
+    output_dir,
+    "Fall_2025_Liberal_Presence.csv"
+  )
+)
+
+#### Evaluate Fall 2025 50 m Detection Cutoff ####
+# Summarize perched CACR detections within and beyond 50 m. Flyover observations are excluded because Strict_Detection only includes perched CACR observations.
+
+perched_detection_50m_summary_fall_2025 <-
+  counts_fall_2025 |>
+  filter(
+    Strict_Detection
+  ) |>
+  mutate(
+    Distance_Category = case_when(
+      is.na(Distance) ~
+        "Missing distance",
+
+      Distance <= 50 ~
+        "Within 50 m",
+
+      Distance > 50 ~
+        "Beyond 50 m"
+    )
+  ) |>
+  count(
+    Distance_Category,
+    name = "Detections"
+  ) |>
+  mutate(
+    Survey_Period = "Fall 2025",
+    .before = 1
+  )
+
+
+strict_site_50m_summary_fall_2025 <-
+  strict_fall_2025 |>
+  summarise(
+    Survey_Period = "Fall 2025",
+
+    Strict_Presence_No_Cutoff = sum(
+      Strict_Presence == 1,
+      na.rm = TRUE
+    ),
+
+    Strict_Presence_Within_50m = sum(
+      Strict_Presence_50m == 1,
+      na.rm = TRUE
+    ),
+
+    Sites_Removed_By_50m = sum(
+      Changed_By_50m,
+      na.rm = TRUE
+    ),
+
+    Sites_With_Missing_Perched_Distance = sum(
+      Strict_Presence == 1 &
+        is.na(Strict_Presence_50m),
+      na.rm = TRUE
+    )
+  )
+
+
+print(
+  perched_detection_50m_summary_fall_2025
+)
+
+print(
+  strict_site_50m_summary_fall_2025
+)
+
+#### Review Fall 2025 Sites Affected by 50 m Cutoff ####
+# Show strict-presence sites removed by the 50 m distance restriction and any strict-presence sites missing perched-detection distances.
+
+sites_removed_by_50m_fall_2025 <-
+  strict_fall_2025 |>
+  filter(
+    Changed_By_50m
+  ) |>
+  select(
+    Site,
+    Strict_Presence,
+    Min_Perched_Distance,
+    Strict_Presence_50m
+  )
+
+
+sites_missing_perched_distance_fall_2025 <-
+  strict_fall_2025 |>
+  filter(
+    Strict_Presence == 1,
+    is.na(Strict_Presence_50m)
+  ) |>
+  select(
+    Site,
+    Strict_Presence,
+    Min_Perched_Distance,
+    Strict_Presence_50m
+  )
+
+
+cat(
+  "Sites removed by the 50 m cutoff:",
+  nrow(sites_removed_by_50m_fall_2025),
+  "\n"
+)
+
+print(
+  sites_removed_by_50m_fall_2025,
+  n = Inf
+)
+
+
+cat(
+  "Strict-presence sites with missing perched distance:",
+  nrow(sites_missing_perched_distance_fall_2025),
+  "\n"
+)
+
+print(
+  sites_missing_perched_distance_fall_2025,
+  n = Inf
+)
+
+#### Save Fall 2025 50 m Evaluation ####
+# Save detection-level and site-level summaries of the 50 m cutoff.
+
+write_csv(
+  perched_detection_50m_summary_fall_2025,
+  file.path(
+    output_dir,
+    "Fall_2025_Perched_Detection_50m_Summary.csv"
+  )
+)
+
+
+write_csv(
+  strict_site_50m_summary_fall_2025,
+  file.path(
+    output_dir,
+    "Fall_2025_Strict_Presence_50m_Summary.csv"
+  )
+)
+
+
+write_csv(
+  sites_removed_by_50m_fall_2025,
+  file.path(
+    output_dir,
+    "Fall_2025_Sites_Removed_By_50m.csv"
+  )
+)
+```
+
+50m cutoff:
+  - Detection level: 19 of 40 perched detections are beyond 50 m, or 47.5%
+  - Site level: 7 of 18 strict-presence sites would be removed, or 38.9%
+  - You would retain 11 of 18 strict-presence sites, or 61.1%

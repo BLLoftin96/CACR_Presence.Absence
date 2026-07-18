@@ -3826,3 +3826,576 @@ write_csv(
   - Detection level: 19 of 40 perched detections are beyond 50 m, or 47.5%
   - Site level: 7 of 18 strict-presence sites would be removed, or 38.9%
   - You would retain 11 of 18 strict-presence sites, or 61.1%
+  
+  
+# Finalized Summary Across Years
+
+## Strict and Liberal Class Across Years
+
+```{r Summarize Presence and Absence Classes Across Years}
+#### Summarize Presence and Absence Classes Across Years ####
+# Report the number and percentage of strict and liberal presence and absence sites for every survey period.
+
+presence_class_summary_all_years <- bind_rows(
+  liberal_2023 |>
+    summarise(
+      Survey_Period = "2023",
+
+      Total_Sites = n(),
+
+      Strict_Presence = sum(
+        Strict_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Strict_Absence = sum(
+        Strict_Presence == 0,
+        na.rm = TRUE
+      ),
+
+      Liberal_Presence = sum(
+        Liberal_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Liberal_Absence = sum(
+        Liberal_Presence == 0,
+        na.rm = TRUE
+      )
+    ),
+
+  liberal_2024 |>
+    summarise(
+      Survey_Period = "2024",
+
+      Total_Sites = n(),
+
+      Strict_Presence = sum(
+        Strict_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Strict_Absence = sum(
+        Strict_Presence == 0,
+        na.rm = TRUE
+      ),
+
+      Liberal_Presence = sum(
+        Liberal_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Liberal_Absence = sum(
+        Liberal_Presence == 0,
+        na.rm = TRUE
+      )
+    ),
+
+  liberal_summer_2025 |>
+    summarise(
+      Survey_Period = "Summer 2025",
+
+      Total_Sites = n(),
+
+      Strict_Presence = sum(
+        Strict_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Strict_Absence = sum(
+        Strict_Presence == 0,
+        na.rm = TRUE
+      ),
+
+      Liberal_Presence = sum(
+        Liberal_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Liberal_Absence = sum(
+        Liberal_Presence == 0,
+        na.rm = TRUE
+      )
+    ),
+
+  liberal_fall_2025 |>
+    summarise(
+      Survey_Period = "Fall 2025",
+
+      Total_Sites = n(),
+
+      Strict_Presence = sum(
+        Strict_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Strict_Absence = sum(
+        Strict_Presence == 0,
+        na.rm = TRUE
+      ),
+
+      Liberal_Presence = sum(
+        Liberal_Presence == 1,
+        na.rm = TRUE
+      ),
+
+      Liberal_Absence = sum(
+        Liberal_Presence == 0,
+        na.rm = TRUE
+      )
+    )
+) |>
+  mutate(
+    Strict_Presence_Percent = round(
+      100 * Strict_Presence / Total_Sites,
+      1
+    ),
+
+    Strict_Absence_Percent = round(
+      100 * Strict_Absence / Total_Sites,
+      1
+    ),
+
+    Liberal_Presence_Percent = round(
+      100 * Liberal_Presence / Total_Sites,
+      1
+    ),
+
+    Liberal_Absence_Percent = round(
+      100 * Liberal_Absence / Total_Sites,
+      1
+    )
+  )
+
+
+print(
+  presence_class_summary_all_years,
+  width = Inf
+)
+
+#### Add Overall Presence and Absence Totals ####
+# Sum all survey periods and calculate the combined class balance.
+
+presence_class_summary_overall <-
+  presence_class_summary_all_years |>
+  summarise(
+    Survey_Period = "All Survey Periods",
+
+    Total_Sites = sum(
+      Total_Sites
+    ),
+
+    Strict_Presence = sum(
+      Strict_Presence
+    ),
+
+    Strict_Absence = sum(
+      Strict_Absence
+    ),
+
+    Liberal_Presence = sum(
+      Liberal_Presence
+    ),
+
+    Liberal_Absence = sum(
+      Liberal_Absence
+    )
+  ) |>
+  mutate(
+    Strict_Presence_Percent = round(
+      100 * Strict_Presence / Total_Sites,
+      1
+    ),
+
+    Strict_Absence_Percent = round(
+      100 * Strict_Absence / Total_Sites,
+      1
+    ),
+
+    Liberal_Presence_Percent = round(
+      100 * Liberal_Presence / Total_Sites,
+      1
+    ),
+
+    Liberal_Absence_Percent = round(
+      100 * Liberal_Absence / Total_Sites,
+      1
+    )
+  )
+
+
+presence_class_summary_complete <-
+  bind_rows(
+    presence_class_summary_all_years,
+    presence_class_summary_overall
+  )
+
+
+print(
+  presence_class_summary_complete,
+  width = Inf
+)
+
+#### Create Long Presence Class Summary ####
+# Convert the class summary to one row per survey period, classification, and presence class.
+
+presence_class_summary_long <-
+  presence_class_summary_complete |>
+  select(
+    Survey_Period,
+    Total_Sites,
+    Strict_Presence,
+    Strict_Absence,
+    Liberal_Presence,
+    Liberal_Absence
+  ) |>
+  pivot_longer(
+    cols = c(
+      Strict_Presence,
+      Strict_Absence,
+      Liberal_Presence,
+      Liberal_Absence
+    ),
+
+    names_to = c(
+      "Classification",
+      "Presence_Class"
+    ),
+
+    names_pattern =
+      "(Strict|Liberal)_(Presence|Absence)",
+
+    values_to = "Sites"
+  ) |>
+  mutate(
+    Percent = round(
+      100 * Sites / Total_Sites,
+      1
+    )
+  )
+
+
+print(
+  presence_class_summary_long,
+  n = Inf
+)
+```
+
+
+## 50m Cut-off Evaluation Across Years
+
+```{r 50m Cutoff Summary Across Years}
+#### Correct Minimum Perched Distance for Summer 2025 ####
+# Recalculate the closest perched CACR detection using the actual Initial Distance column.
+
+min_perched_distance_summer_2025 <-
+  counts_summer_2025 |>
+  filter(
+    Strict_Detection
+  ) |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Min_Perched_Distance = if (
+      all(is.na(`Initial Distance`))
+    ) {
+      NA_real_
+    } else {
+      min(
+        `Initial Distance`,
+        na.rm = TRUE
+      )
+    },
+
+    .groups = "drop"
+  )
+
+
+strict_summer_2025 <-
+  strict_summer_2025 |>
+  select(
+    -any_of(
+      "Min_Perched_Distance"
+    )
+  ) |>
+  left_join(
+    min_perched_distance_summer_2025,
+    by = "Site"
+  ) |>
+  relocate(
+    Min_Perched_Distance,
+    .before = Strict_Presence_50m
+  )
+
+#### Validate Summer 2025 Minimum Perched Distance ####
+# Confirm the recovered minimum distances reproduce the existing 50 m strict-presence classification.
+
+summer_2025_distance_patch_check <-
+  strict_summer_2025 |>
+  mutate(
+    Expected_Strict_Presence_50m = case_when(
+      Strict_Presence == 0 ~ 0L,
+
+      Strict_Presence == 1 &
+        Min_Perched_Distance <= 50 ~ 1L,
+
+      Strict_Presence == 1 &
+        Min_Perched_Distance > 50 ~ 0L,
+
+      TRUE ~ NA_integer_
+    )
+  ) |>
+  filter(
+    Strict_Presence_50m != Expected_Strict_Presence_50m |
+      xor(
+        is.na(Strict_Presence_50m),
+        is.na(Expected_Strict_Presence_50m)
+      )
+  )
+
+
+cat(
+  "Summer 2025 mismatches after distance patch:",
+  nrow(summer_2025_distance_patch_check),
+  "\n"
+)
+
+print(
+  summer_2025_distance_patch_check,
+  n = Inf
+)
+
+#### Create Summer 2025 Liberal 50 m Classification ####
+# Join the strict 50 m classification into the liberal dataset, then retain sites supported by either a perched detection within 50 m or cone evidence.
+
+liberal_summer_2025_50m <- liberal_summer_2025 |>
+  left_join(strict_summer_2025 |> select(Site, Min_Perched_Distance, Strict_Presence_50m, Changed_By_50m), by = "Site") |>
+  mutate(
+    Liberal_Presence_50m = as.integer(Strict_Presence_50m == 1 | Cone_Evidence),
+    Changed_By_50m_Liberal = Liberal_Presence == 1 & Liberal_Presence_50m == 0
+  )
+
+#### Create Fall 2025 Liberal 50 m Classification ####
+# Retain sites supported by either a perched detection within 50 m or cone evidence.
+
+liberal_fall_2025_50m <- liberal_fall_2025 |>
+  mutate(
+    Liberal_Presence_50m = as.integer(Strict_Presence_50m == 1 | Cone_Evidence),
+    Changed_By_50m_Liberal = Liberal_Presence == 1 & Liberal_Presence_50m == 0
+  )
+
+#### Confirm Liberal 50 m Objects ####
+# Verify that each survey-period dataset contains the new 50 m liberal classification.
+
+names(liberal_2023_50m)
+names(liberal_2024_50m)
+names(liberal_summer_2025_50m)
+names(liberal_fall_2025_50m)
+
+#### Create Liberal 50 m Classifications Across Years ####
+# Recalculate liberal presence using a perched CACR detection within 50 m or cone evidence.
+
+liberal_2023_50m <- liberal_2023 |>
+  mutate(
+    Liberal_Presence_50m = as.integer(Strict_Presence_50m == 1 | Cone_Evidence),
+    Changed_By_50m_Liberal = Liberal_Presence == 1 & Liberal_Presence_50m == 0
+  )
+
+liberal_2024_50m <- liberal_2024 |>
+  mutate(
+    Liberal_Presence_50m = as.integer(Strict_Presence_50m == 1 | Cone_Evidence),
+    Changed_By_50m_Liberal = Liberal_Presence == 1 & Liberal_Presence_50m == 0
+  )
+
+liberal_summer_2025_50m <- liberal_summer_2025 |>
+  left_join(strict_summer_2025 |> select(Site, Min_Perched_Distance, Strict_Presence_50m, Changed_By_50m), by = "Site") |>
+  mutate(
+    Liberal_Presence_50m = as.integer(Strict_Presence_50m == 1 | Cone_Evidence),
+    Changed_By_50m_Liberal = Liberal_Presence == 1 & Liberal_Presence_50m == 0
+  )
+
+liberal_fall_2025_50m <- liberal_fall_2025 |>
+  mutate(
+    Liberal_Presence_50m = as.integer(Strict_Presence_50m == 1 | Cone_Evidence),
+    Changed_By_50m_Liberal = Liberal_Presence == 1 & Liberal_Presence_50m == 0
+  )
+
+#### Summarize 50 m Effects Across Years ####
+# Compare strict and liberal presence classifications before and after applying the 50 m cutoff to perched CACR detections.
+
+presence_50m_summary_all_years <- bind_rows(
+
+  liberal_2023_50m |>
+    summarise(
+      Survey_Period = "2023",
+      Total_Sites = n(),
+      Strict_Presence_No_Cutoff = sum(Strict_Presence == 1, na.rm = TRUE),
+      Strict_Presence_50m = sum(Strict_Presence_50m == 1, na.rm = TRUE),
+      Liberal_Presence_No_Cutoff = sum(Liberal_Presence == 1, na.rm = TRUE),
+      Liberal_Presence_50m = sum(Liberal_Presence_50m == 1, na.rm = TRUE)
+    ) |>
+    mutate(
+      Strict_Sites_Removed = Strict_Presence_No_Cutoff - Strict_Presence_50m,
+      Strict_Percent_Removed = round(100 * Strict_Sites_Removed / Strict_Presence_No_Cutoff, 1),
+      Liberal_Sites_Removed = Liberal_Presence_No_Cutoff - Liberal_Presence_50m,
+      Liberal_Percent_Removed = round(100 * Liberal_Sites_Removed / Liberal_Presence_No_Cutoff, 1)
+    ),
+
+  liberal_2024_50m |>
+    summarise(
+      Survey_Period = "2024",
+      Total_Sites = n(),
+      Strict_Presence_No_Cutoff = sum(Strict_Presence == 1, na.rm = TRUE),
+      Strict_Presence_50m = sum(Strict_Presence_50m == 1, na.rm = TRUE),
+      Liberal_Presence_No_Cutoff = sum(Liberal_Presence == 1, na.rm = TRUE),
+      Liberal_Presence_50m = sum(Liberal_Presence_50m == 1, na.rm = TRUE)
+    ) |>
+    mutate(
+      Strict_Sites_Removed = Strict_Presence_No_Cutoff - Strict_Presence_50m,
+      Strict_Percent_Removed = round(100 * Strict_Sites_Removed / Strict_Presence_No_Cutoff, 1),
+      Liberal_Sites_Removed = Liberal_Presence_No_Cutoff - Liberal_Presence_50m,
+      Liberal_Percent_Removed = round(100 * Liberal_Sites_Removed / Liberal_Presence_No_Cutoff, 1)
+    ),
+
+  liberal_summer_2025_50m |>
+    summarise(
+      Survey_Period = "Summer 2025",
+      Total_Sites = n(),
+      Strict_Presence_No_Cutoff = sum(Strict_Presence == 1, na.rm = TRUE),
+      Strict_Presence_50m = sum(Strict_Presence_50m == 1, na.rm = TRUE),
+      Liberal_Presence_No_Cutoff = sum(Liberal_Presence == 1, na.rm = TRUE),
+      Liberal_Presence_50m = sum(Liberal_Presence_50m == 1, na.rm = TRUE)
+    ) |>
+    mutate(
+      Strict_Sites_Removed = Strict_Presence_No_Cutoff - Strict_Presence_50m,
+      Strict_Percent_Removed = round(100 * Strict_Sites_Removed / Strict_Presence_No_Cutoff, 1),
+      Liberal_Sites_Removed = Liberal_Presence_No_Cutoff - Liberal_Presence_50m,
+      Liberal_Percent_Removed = round(100 * Liberal_Sites_Removed / Liberal_Presence_No_Cutoff, 1)
+    ),
+
+  liberal_fall_2025_50m |>
+    summarise(
+      Survey_Period = "Fall 2025",
+      Total_Sites = n(),
+      Strict_Presence_No_Cutoff = sum(Strict_Presence == 1, na.rm = TRUE),
+      Strict_Presence_50m = sum(Strict_Presence_50m == 1, na.rm = TRUE),
+      Liberal_Presence_No_Cutoff = sum(Liberal_Presence == 1, na.rm = TRUE),
+      Liberal_Presence_50m = sum(Liberal_Presence_50m == 1, na.rm = TRUE)
+    ) |>
+    mutate(
+      Strict_Sites_Removed = Strict_Presence_No_Cutoff - Strict_Presence_50m,
+      Strict_Percent_Removed = round(100 * Strict_Sites_Removed / Strict_Presence_No_Cutoff, 1),
+      Liberal_Sites_Removed = Liberal_Presence_No_Cutoff - Liberal_Presence_50m,
+      Liberal_Percent_Removed = round(100 * Liberal_Sites_Removed / Liberal_Presence_No_Cutoff, 1)
+    )
+)
+
+print(
+  presence_50m_summary_all_years,
+  width = Inf
+)
+
+#### Add Overall 50 m Summary ####
+# Add all survey periods together to show the full effect of the cutoff.
+
+presence_50m_summary_overall <-
+  presence_50m_summary_all_years |>
+  summarise(
+    Survey_Period = "All Survey Periods",
+    Total_Sites = sum(Total_Sites),
+    Strict_Presence_No_Cutoff = sum(Strict_Presence_No_Cutoff),
+    Strict_Presence_50m = sum(Strict_Presence_50m),
+    Strict_Sites_Removed = sum(Strict_Sites_Removed),
+    Strict_Percent_Removed = round(100 * Strict_Sites_Removed / Strict_Presence_No_Cutoff, 1),
+    Liberal_Presence_No_Cutoff = sum(Liberal_Presence_No_Cutoff),
+    Liberal_Presence_50m = sum(Liberal_Presence_50m),
+    Liberal_Sites_Removed = sum(Liberal_Sites_Removed),
+    Liberal_Percent_Removed = round(100 * Liberal_Sites_Removed / Liberal_Presence_No_Cutoff, 1)
+  )
+
+presence_50m_summary_complete <-
+  bind_rows(
+    presence_50m_summary_all_years,
+    presence_50m_summary_overall
+  )
+
+print(
+  presence_50m_summary_complete,
+  width = Inf
+)
+
+#### Add Overall 50 m Summary ####
+# Add all survey periods together to show the full effect of the cutoff.
+
+presence_50m_summary_overall <- presence_50m_summary_all_years |>
+  summarise(
+    Survey_Period = "All Survey Periods",
+    Total_Sites = sum(Total_Sites),
+    Strict_Presence_No_Cutoff = sum(Strict_Presence_No_Cutoff),
+    Strict_Presence_50m = sum(Strict_Presence_50m),
+    Strict_Sites_Removed = sum(Strict_Sites_Removed),
+    Strict_Percent_Removed = round(100 * Strict_Sites_Removed / Strict_Presence_No_Cutoff, 1),
+    Liberal_Presence_No_Cutoff = sum(Liberal_Presence_No_Cutoff),
+    Liberal_Presence_50m = sum(Liberal_Presence_50m),
+    Liberal_Sites_Removed = sum(Liberal_Sites_Removed),
+    Liberal_Percent_Removed = round(100 * Liberal_Sites_Removed / Liberal_Presence_No_Cutoff, 1)
+  )
+
+presence_50m_summary_complete <- bind_rows(
+  presence_50m_summary_all_years,
+  presence_50m_summary_overall
+)
+
+print(presence_50m_summary_complete, width = Inf)
+
+#### Validate Complete 50 m Summary ####
+# Confirm that the overall row equals the sum of the four survey-period rows.
+
+stopifnot(
+  presence_50m_summary_overall$Total_Sites == sum(presence_50m_summary_all_years$Total_Sites),
+  presence_50m_summary_overall$Strict_Presence_No_Cutoff == sum(presence_50m_summary_all_years$Strict_Presence_No_Cutoff),
+  presence_50m_summary_overall$Strict_Presence_50m == sum(presence_50m_summary_all_years$Strict_Presence_50m),
+  presence_50m_summary_overall$Liberal_Presence_No_Cutoff == sum(presence_50m_summary_all_years$Liberal_Presence_No_Cutoff),
+  presence_50m_summary_overall$Liberal_Presence_50m == sum(presence_50m_summary_all_years$Liberal_Presence_50m)
+)
+
+#### Save Complete 50 m Summary ####
+# Save the cross-year summary for reporting and later reference.
+
+write.csv(
+  presence_50m_summary_complete,
+  "Presence_50m_Summary_All_Years.csv",
+  row.names = FALSE
+)
+```
+
+
+## Save Summaries
+
+```{r Save Summaries}
+#### Save Multi-Year Presence Summaries ####
+# Confirm the summary objects and output directory are available, save all three CSV files, and verify that each file was written successfully.
+
+stopifnot(
+  dir.exists(output_dir),
+  exists("presence_50m_summary_complete"),
+  exists("presence_class_summary_complete"),
+  exists("presence_class_summary_long")
+)
+
+write_csv(presence_50m_summary_complete, file.path(output_dir, "CACR_Presence_50m_Evaluation_All_Years.csv"))
+
+write_csv(presence_class_summary_complete, file.path(output_dir, "CACR_Presence_Absence_Summary_All_Years.csv"))
+
+write_csv(presence_class_summary_long, file.path(output_dir, "CACR_Presence_Absence_Summary_Long_All_Years.csv"))
+
+stopifnot(
+  file.exists(file.path(output_dir, "CACR_Presence_50m_Evaluation_All_Years.csv")),
+  file.exists(file.path(output_dir, "CACR_Presence_Absence_Summary_All_Years.csv")),
+  file.exists(file.path(output_dir, "CACR_Presence_Absence_Summary_Long_All_Years.csv"))
+)
+
+cat("All multi-year presence summary files saved successfully to:", output_dir, "\n")
+```
+

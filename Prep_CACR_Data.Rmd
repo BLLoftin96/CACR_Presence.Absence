@@ -723,6 +723,13 @@ logger_cones_summer_2025 <- read_csv(
   show_col_types = FALSE
 )
 
+identified_species_summer_2025 <- read_csv(
+  file.path(
+    "R:/CACR_HSM_LiDAR/CACR_Presence.Absence/HSM_Data/2025/Summer",
+    "2025_CACR_Identified_Species.csv"
+  ),
+  show_col_types = FALSE
+)
 
 # Replace this filename with the official survey-site shapefile name
 
@@ -2221,6 +2228,592 @@ cat(
   ),
   "\n"
 )
+
+#### Evaluate 50m Restriction ####
+  #### Create Summer 2025 CACR Detection Data ####
+# Match each individual detection to its parent bird survey using:
+#
+# identified_species_summer_2025$ParentGlobalID = survey_summer_2025$GlobalID
+
+counts_summer_2025 <-
+  identified_species_summer_2025 |>
+  left_join(
+    survey_summer_2025 |>
+      transmute(
+        ParentGlobalID = GlobalID,
+
+        Site = str_trim(
+          str_to_upper(
+            as.character(`Survey Point Number`)
+          )
+        ),
+
+        Survey_x = x,
+        Survey_y = y
+      ),
+    by = "ParentGlobalID"
+  ) |>
+  mutate(
+    Distance = as.numeric(`Initial Distance`),
+
+    Strict_Detection =
+      str_to_upper(
+        str_trim(
+          as.character(Species)
+        )
+      ) == "CACR" &
+
+      str_to_upper(
+        str_trim(
+          as.character(`Perched or Flyover`)
+        )
+      ) == "PERCHED"
+  )
+
+#### Create Summer 2025 Strict 50 m Presence ####
+# A site is a strict 50 m presence when at least one perched CACR detection occurred within 50 m of the survey point.
+
+strict_50m_summer_2025 <-
+  counts_summer_2025 |>
+  filter(
+    Strict_Detection
+  ) |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Strict_Presence_50m = case_when(
+      any(
+        Distance <= 50,
+        na.rm = TRUE
+      ) ~ 1L,
+
+      all(
+        is.na(Distance)
+      ) ~ NA_integer_,
+
+      TRUE ~ 0L
+    ),
+
+    .groups = "drop"
+  )
+
+
+strict_summer_2025 <-
+  strict_summer_2025 |>
+  left_join(
+    strict_50m_summer_2025,
+    by = "Site"
+  ) |>
+  mutate(
+    Strict_Presence_50m = case_when(
+      Strict_Presence == 0 ~ 0L,
+      TRUE ~ Strict_Presence_50m
+    ),
+
+    Changed_By_50m =
+      Strict_Presence == 1 &
+      Strict_Presence_50m == 0
+  )
+
+#### Evaluate Summer 2025 50 m Detection Cutoff ####
+# Summarize individual perched CACR detections and site classifications with and without a 50 m cutoff.
+
+perched_detection_50m_summary_summer_2025 <-
+  counts_summer_2025 |>
+  filter(
+    Strict_Detection
+  ) |>
+  mutate(
+    Distance_Category = case_when(
+      is.na(Distance) ~ "Missing distance",
+      Distance <= 50 ~ "Within 50 m",
+      Distance > 50 ~ "Beyond 50 m"
+    )
+  ) |>
+  count(
+    Distance_Category,
+    name = "Detections"
+  ) |>
+  mutate(
+    Survey_Period = "2025",
+    .before = 1
+  )
+
+
+strict_site_50m_summary_summer_2025 <-
+  strict_summer_2025 |>
+  summarise(
+    Survey_Period = "2025",
+
+    Strict_Presence_No_Cutoff = sum(
+      Strict_Presence,
+      na.rm = TRUE
+    ),
+
+    Strict_Presence_Within_50m = sum(
+      Strict_Presence_50m == 1,
+      na.rm = TRUE
+    ),
+
+    Sites_Removed_By_50m = sum(
+      Changed_By_50m,
+      na.rm = TRUE
+    ),
+
+    Sites_With_Missing_Perched_Distance = sum(
+      Strict_Presence == 1 &
+        is.na(Strict_Presence_50m),
+      na.rm = TRUE
+    )
+  )
+
+
+print(
+  perched_detection_50m_summary_summer_2025
+)
+
+print(
+  strict_site_50m_summary_summer_2025
+)
+
+#### Review Summer 2025 Strict Presences Without a 50 m Classification ####
+# Identify strict-presence sites that do not have a matched perched CACR detection with a usable distance.
+
+missing_50m_sites_summer_2025 <-
+  strict_summer_2025 |>
+  filter(
+    Strict_Presence == 1,
+    is.na(Strict_Presence_50m)
+  ) |>
+  select(
+    Site,
+    everything()
+  )
+
+print(
+  missing_50m_sites_summer_2025
+)
+
+missing_50m_detection_records_summer_2025 <-
+  counts_summer_2025 |>
+  filter(
+    Site %in% missing_50m_sites_summer_2025$Site
+  ) |>
+  select(
+    Site,
+    Species,
+    `Perched or Flyover`,
+    `Initial Distance`,
+    Distance,
+    Strict_Detection,
+    everything()
+  ) |>
+  arrange(
+    Site
+  )
+
+print(
+  missing_50m_detection_records_summer_2025
+)
+
+# This showed an obvious code failure where flyovers were counted as presence in the strict (and likely liberal) dataset
+#### Rebuild Summer 2025 Strict Presence from Individual Detections ####
+# Strict presence requires at least one CACR recorded as PERCHED. Flyover-only CACR detections do not count as strict presence.
+
+strict_detection_by_site_summer_2025 <-
+  counts_summer_2025 |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Strict_Presence = as.integer(
+      any(
+        Strict_Detection,
+        na.rm = TRUE
+      )
+    ),
+
+    .groups = "drop"
+  )
+
+
+strict_summer_2025_corrected <-
+  survey_summer_2025 |>
+  transmute(
+    Site = str_trim(
+      str_to_upper(
+        as.character(`Survey Point Number`)
+      )
+    ),
+
+    x,
+    y
+  ) |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    x = first(x),
+    y = first(y),
+    Survey_Visits = n(),
+    .groups = "drop"
+  ) |>
+  left_join(
+    strict_detection_by_site_summer_2025,
+    by = "Site"
+  ) |>
+  mutate(
+    Strict_Presence = coalesce(
+      Strict_Presence,
+      0L
+    )
+  ) |>
+  arrange(
+    Site
+  )
+
+#### Compare Original and Corrected Summer 2025 Strict Presence ####
+
+strict_correction_check_summer_2025 <-
+  strict_summer_2025 |>
+  select(
+    Site,
+    Original_Strict_Presence = Strict_Presence
+  ) |>
+  left_join(
+    strict_summer_2025_corrected |>
+      select(
+        Site,
+        Corrected_Strict_Presence = Strict_Presence
+      ),
+    by = "Site"
+  ) |>
+  mutate(
+    Classification_Changed =
+      Original_Strict_Presence != Corrected_Strict_Presence
+  )
+
+
+print(
+  strict_correction_check_summer_2025 |>
+    filter(
+      Classification_Changed
+    )
+)
+
+
+cat(
+  "Original strict presences:",
+  sum(
+    strict_correction_check_summer_2025$Original_Strict_Presence
+  ),
+  "\n"
+)
+
+cat(
+  "Corrected strict presences:",
+  sum(
+    strict_correction_check_summer_2025$Corrected_Strict_Presence
+  ),
+  "\n"
+)
+
+# This is correct now
+strict_summer_2025 <- strict_summer_2025_corrected
+
+#### Rebuild Corrected Summer 2025 Liberal Presence ####
+# Liberal presence requires either:
+# 1. at least one perched CACR detection, or
+# 2. crossbill-opened cone evidence.
+
+liberal_summer_2025 <-
+  strict_summer_2025 |>
+  left_join(
+    cone_evidence_summer_2025,
+    by = "Site"
+  ) |>
+  left_join(
+    cone_survey_exceptions_summer_2025,
+    by = "Site"
+  ) |>
+  mutate(
+    Cone_Evidence = case_when(
+      !is.na(Cone_Evidence) ~
+        Cone_Evidence,
+
+      Site %in% c(
+        "MAC-058",
+        "LPO-060",
+        "MAC-089"
+      ) ~
+        FALSE,
+
+      TRUE ~
+        NA
+    ),
+
+    Liberal_Presence = as.integer(
+      Strict_Presence == 1 |
+        Cone_Evidence
+    ),
+
+    Presence_Evidence = case_when(
+      Strict_Presence == 1 &
+        Cone_Evidence ~
+        "Detected perched CACR and cone evidence",
+
+      Strict_Presence == 1 &
+        Site %in% c(
+          "MAC-058",
+          "LPO-060",
+          "MAC-089"
+        ) ~
+        "Detected perched CACR; classified from bird survey only",
+
+      Strict_Presence == 1 ~
+        "Detected perched CACR only",
+
+      Cone_Evidence ~
+        "Cone evidence only",
+
+      Site == "MAC-089" ~
+        "No perched CACR detected; no lodgepole present",
+
+      Site %in% c(
+        "MAC-058",
+        "LPO-060"
+      ) ~
+        "No perched CACR detected; cone survey not completed",
+
+      TRUE ~
+        "No presence evidence"
+    )
+  ) |>
+  arrange(
+    Site
+  )
+
+liberal_summer_2025 |>
+  filter(
+    Site %in% c(
+      "LPO-098",
+      "LPO-115",
+      "MAC-011",
+      "MAC-104",
+      "MLPF-017",
+      "MLPF-053"
+    )
+  ) |>
+  select(
+    Site,
+    Strict_Presence,
+    Cone_Evidence,
+    Liberal_Presence,
+    Presence_Evidence
+  ) |>
+  print()
+
+#### Evaluate 50m Restriction ####
+  #### Create Summer 2025 CACR Detection Data ####
+# Match each individual detection to its parent bird survey using:
+#
+# identified_species_summer_2025$ParentGlobalID = survey_summer_2025$GlobalID
+
+counts_summer_2025 <-
+  identified_species_summer_2025 |>
+  left_join(
+    survey_summer_2025 |>
+      transmute(
+        ParentGlobalID = GlobalID,
+
+        Site = str_trim(
+          str_to_upper(
+            as.character(`Survey Point Number`)
+          )
+        ),
+
+        Survey_x = x,
+        Survey_y = y
+      ),
+    by = "ParentGlobalID"
+  ) |>
+  mutate(
+    Distance = as.numeric(`Initial Distance`),
+
+    Strict_Detection =
+      str_to_upper(
+        str_trim(
+          as.character(Species)
+        )
+      ) == "CACR" &
+
+      str_to_upper(
+        str_trim(
+          as.character(`Perched or Flyover`)
+        )
+      ) == "PERCHED"
+  )
+
+#### Create Summer 2025 Strict 50 m Presence ####
+# A site is a strict 50 m presence when at least one perched CACR detection occurred within 50 m of the survey point.
+
+strict_50m_summer_2025 <-
+  counts_summer_2025 |>
+  filter(
+    Strict_Detection
+  ) |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Strict_Presence_50m = case_when(
+      any(
+        Distance <= 50,
+        na.rm = TRUE
+      ) ~ 1L,
+
+      all(
+        is.na(Distance)
+      ) ~ NA_integer_,
+
+      TRUE ~ 0L
+    ),
+
+    .groups = "drop"
+  )
+
+
+strict_summer_2025 <-
+  strict_summer_2025 |>
+  left_join(
+    strict_50m_summer_2025,
+    by = "Site"
+  ) |>
+  mutate(
+    Strict_Presence_50m = case_when(
+      Strict_Presence == 0 ~ 0L,
+      TRUE ~ Strict_Presence_50m
+    ),
+
+    Changed_By_50m =
+      Strict_Presence == 1 &
+      Strict_Presence_50m == 0
+  )
+
+#### Evaluate Summer 2025 50 m Detection Cutoff ####
+# Summarize individual perched CACR detections and site classifications with and without a 50 m cutoff.
+
+perched_detection_50m_summary_summer_2025 <-
+  counts_summer_2025 |>
+  filter(
+    Strict_Detection
+  ) |>
+  mutate(
+    Distance_Category = case_when(
+      is.na(Distance) ~ "Missing distance",
+      Distance <= 50 ~ "Within 50 m",
+      Distance > 50 ~ "Beyond 50 m"
+    )
+  ) |>
+  count(
+    Distance_Category,
+    name = "Detections"
+  ) |>
+  mutate(
+    Survey_Period = "2025",
+    .before = 1
+  )
+
+
+strict_site_50m_summary_summer_2025 <-
+  strict_summer_2025 |>
+  summarise(
+    Survey_Period = "2025",
+
+    Strict_Presence_No_Cutoff = sum(
+      Strict_Presence,
+      na.rm = TRUE
+    ),
+
+    Strict_Presence_Within_50m = sum(
+      Strict_Presence_50m == 1,
+      na.rm = TRUE
+    ),
+
+    Sites_Removed_By_50m = sum(
+      Changed_By_50m,
+      na.rm = TRUE
+    ),
+
+    Sites_With_Missing_Perched_Distance = sum(
+      Strict_Presence == 1 &
+        is.na(Strict_Presence_50m),
+      na.rm = TRUE
+    )
+  )
+
+
+print(
+  perched_detection_50m_summary_summer_2025
+)
+
+print(
+  strict_site_50m_summary_summer_2025
+)
+
+#### Save Summer 2025 Presence Data ####
+
+dir.create(
+  file.path(
+    output_dir,
+    "Presence_Data"
+  ),
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+
+write_csv(
+  strict_summer_2025,
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Strict_Presence_Summer_2025.csv"
+  )
+)
+
+
+write_csv(
+  liberal_summer_2025,
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Liberal_Presence_Summer_2025.csv"
+  )
+)
+
+cat(
+  "Saved:",
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Strict_Presence_Summer_2025.csv"
+  ),
+  "\n"
+)
+
+cat(
+  "Saved:",
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Liberal_Presence_Summer_2025.csv"
+  ),
+  "\n"
+)
+
+
 ```
 
 

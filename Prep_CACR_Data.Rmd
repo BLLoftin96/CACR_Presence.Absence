@@ -679,10 +679,7 @@ Removing detections over 50m would remove ~31% of the presence strict data.
 ### Summer
 
 ```{r Clean and Classify Summer 2025 Survey Data}
-# I noticed a duplicate site ID for MAC-124 but in different areas, so I will be using a shapefile to validate if this is a typo
-
-# Load Summer 2025 survey and cone data, compare duplicate MAC-124 records with official site locations, and correct site-ID typos
-# Survey IDs omit the trailing "-D" used in the official shapefile nomenclature (for example, LPO-004 versus LPO-004-D).
+# I noticed a duplicate site ID for MAC-124 but in different areas, so I will be using a shapefile to validate if this is a typo. I will need to standardize the thermologger shapefile
 
 #### Load Summer 2025 Data and Check MAC-124 ####
 
@@ -985,6 +982,1242 @@ cat(
   sum(
     mac124_correction_summary$Site_ID_Corrected,
     na.rm = TRUE
+  ),
+  "\n"
+)
+
+#### Create Strict Summer 2025 Presence Data ####
+# Strict presence is based on whether Cassia Crossbills were directly detected.
+
+counts_summer_2025 <- survey_summer_2025 |>
+  transmute(
+    Site = str_trim(
+      str_to_upper(
+        as.character(`Survey Point Number`)
+      )
+    ),
+
+    Survey_Date = `Date and Time`,
+
+    CACR_Detected_Response = str_trim(
+      str_to_upper(
+        as.character(
+          `Any Cassia Crossbills Detected`
+        )
+      )
+    ),
+
+    x,
+    y
+  )
+
+
+# Check that every survey has a usable CACR detection response
+
+missing_detection_responses_summer_2025 <-
+  counts_summer_2025 |>
+  filter(
+    is.na(CACR_Detected_Response) |
+      !CACR_Detected_Response %in%
+        c(
+          "YES",
+          "NO"
+        )
+  )
+
+if (nrow(missing_detection_responses_summer_2025) > 0) {
+  print(
+    missing_detection_responses_summer_2025
+  )
+
+  stop(
+    paste0(
+      nrow(missing_detection_responses_summer_2025),
+      " Summer 2025 survey record(s) have a missing or unexpected ",
+      "CACR detection response. Review the printed records before continuing."
+    )
+  )
+}
+
+
+counts_summer_2025 <- counts_summer_2025 |>
+  mutate(
+    CACR_Detected =
+      CACR_Detected_Response == "YES"
+  )
+
+
+strict_summer_2025 <- counts_summer_2025 |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    x = first(
+      x[
+        !is.na(x)
+      ],
+      default = NA_real_
+    ),
+
+    y = first(
+      y[
+        !is.na(y)
+      ],
+      default = NA_real_
+    ),
+
+    Survey_Visits = n(),
+
+    Strict_Presence = as.integer(
+      any(
+        CACR_Detected
+      )
+    ),
+
+    .groups = "drop"
+  ) |>
+  arrange(
+    Site
+  )
+
+
+#### Create Minimal Summer 2025 Cone-Evidence Data ####
+# Liberal presence requires only whether any crossbill-opened cones were found.
+# Crossbill-opened cones may occur in either the canopy or at the tree base.
+
+
+# Create a lookup connecting additional-tree cone records to survey sites
+
+cone_survey_site_lookup_summer_2025 <-
+  cone_survey_summer_2025 |>
+  transmute(
+    ParentGlobalID =
+      GlobalID,
+
+    Site = str_remove(
+      str_trim(
+        str_to_upper(
+          as.character(
+            `Survey Point ID`
+          )
+        )
+      ),
+      "-D$"
+    )
+  )
+
+
+# Join additional-tree cone counts to their survey sites
+
+additional_cone_records_summer_2025 <-
+  cone_counts_summer_2025 |>
+  left_join(
+    cone_survey_site_lookup_summer_2025,
+    by = "ParentGlobalID"
+  )
+
+
+# Every additional-tree record should match a parent cone survey
+
+unmatched_additional_cones_summer_2025 <-
+  additional_cone_records_summer_2025 |>
+  filter(
+    is.na(Site) |
+      Site == ""
+  )
+
+if (nrow(unmatched_additional_cones_summer_2025) > 0) {
+  print(
+    unmatched_additional_cones_summer_2025
+  )
+
+  stop(
+    paste0(
+      nrow(unmatched_additional_cones_summer_2025),
+      " additional-tree cone record(s) did not match a parent cone survey. ",
+      "Review ParentGlobalID and GlobalID before continuing."
+    )
+  )
+}
+
+
+# Retain only the information needed to identify cone evidence
+
+additional_cone_evidence_summer_2025 <-
+  additional_cone_records_summer_2025 |>
+  transmute(
+    Site,
+
+    Canopy_Crossbill_Opened_Cones =
+      as.numeric(
+        `Canopy Crossbill Opened Cones`
+      ),
+
+    Base_Crossbill_Opened_Cones =
+      as.numeric(
+        `Base Crossbill Opened Cones`
+      ),
+
+    Cone_Evidence =
+      coalesce(
+        Canopy_Crossbill_Opened_Cones,
+        0
+      ) > 0 |
+      coalesce(
+        Base_Crossbill_Opened_Cones,
+        0
+      ) > 0
+  )
+
+
+# Prepare cone evidence from thermologger trees
+
+logger_cone_evidence_summer_2025 <-
+  logger_cones_summer_2025 |>
+  transmute(
+    Site = str_remove(
+      str_trim(
+        str_to_upper(
+          as.character(
+            `Survey Point ID`
+          )
+        )
+      ),
+      "-D$"
+    ),
+
+    Canopy_Crossbill_Opened_Cones =
+      as.numeric(
+        `Canopy Crossbill Forage Count`
+      ),
+
+    Base_Crossbill_Opened_Cones =
+      as.numeric(
+        `Base Crossbill Forage Count`
+      ),
+
+    Cone_Evidence =
+      coalesce(
+        Canopy_Crossbill_Opened_Cones,
+        0
+      ) > 0 |
+      coalesce(
+        Base_Crossbill_Opened_Cones,
+        0
+      ) > 0
+  )
+
+
+# Combine all trees and summarize cone evidence by survey site
+
+cone_evidence_summer_2025 <-
+  bind_rows(
+    logger_cone_evidence_summer_2025,
+    additional_cone_evidence_summer_2025
+  ) |>
+  filter(
+    !is.na(Site),
+    Site != ""
+  ) |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Trees_With_Cone_Counts = n(),
+
+    Trees_With_Cone_Evidence = sum(
+      Cone_Evidence
+    ),
+
+    Cone_Evidence = any(
+      Cone_Evidence
+    ),
+
+    .groups = "drop"
+  )
+
+
+#### Check Summer 2025 Cone Coverage ####
+# Every bird-survey site should have corresponding cone-count data.
+# First run found typos and instances where we had bird surveys with no cone date or vice versa. Specifically, MAC-079 was the label for the cone count but CACR and veg had it labeled as MAC-072 so we will rename it to match. For no cone counts, we had MAC-058 which had an unauthorized camp with activity making it too dangerous to set up a logger, LPO-060 we couldn't find a logger so no cones were surveyed, and MAC-089 had no lodgepole so there were no cones to survey. 
+
+bird_sites_without_cone_counts_summer_2025 <-
+  strict_summer_2025 |>
+  distinct(
+    Site
+  ) |>
+  anti_join(
+    cone_evidence_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  )
+
+
+cone_sites_without_bird_surveys_summer_2025 <-
+  cone_evidence_summer_2025 |>
+  distinct(
+    Site
+  ) |>
+  anti_join(
+    strict_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  )
+
+
+cat(
+  "Bird-survey sites without cone counts:",
+  nrow(
+    bird_sites_without_cone_counts_summer_2025
+  ),
+  "\n"
+)
+
+print(
+  bird_sites_without_cone_counts_summer_2025
+)
+
+
+cat(
+  "Cone-count sites without a bird survey:",
+  nrow(
+    cone_sites_without_bird_surveys_summer_2025
+  ),
+  "\n"
+)
+
+print(
+  cone_sites_without_bird_surveys_summer_2025
+)
+
+#### Correct Summer 2025 Cone-Survey Site ID ####
+# The cone survey labeled MAC-079 corresponds to the bird and vegetation survey site MAC-072. Correct the cone-survey site ID before summarizing cone evidence.
+
+cone_survey_summer_2025 <- cone_survey_summer_2025 |>
+  mutate(
+    `Survey Point ID` = case_when(
+      str_remove(
+        str_trim(
+          str_to_upper(
+            as.character(`Survey Point ID`)
+          )
+        ),
+        "-D$"
+      ) == "MAC-079" ~
+        "MAC-072",
+
+      TRUE ~
+        as.character(`Survey Point ID`)
+    )
+  )
+
+
+logger_cones_summer_2025 <- logger_cones_summer_2025 |>
+  mutate(
+    `Survey Point ID` = case_when(
+      str_remove(
+        str_trim(
+          str_to_upper(
+            as.character(`Survey Point ID`)
+          )
+        ),
+        "-D$"
+      ) == "MAC-079" ~
+        "MAC-072",
+
+      TRUE ~
+        as.character(`Survey Point ID`)
+    )
+  )
+
+
+#### Recreate Minimal Summer 2025 Cone-Evidence Data ####
+# Match child cone-count records to parent cone surveys using:
+
+# cone_counts_summer_2025$ParentGlobalID = cone_survey_summer_2025$GlobalID
+
+cone_survey_site_lookup_summer_2025 <-
+  cone_survey_summer_2025 |>
+  transmute(
+    ParentGlobalID =
+      GlobalID,
+
+    Site = str_remove(
+      str_trim(
+        str_to_upper(
+          as.character(
+            `Survey Point ID`
+          )
+        )
+      ),
+      "-D$"
+    ),
+
+    Cone_x = x,
+    Cone_y = y
+  )
+
+
+additional_cone_records_summer_2025 <-
+  cone_counts_summer_2025 |>
+  left_join(
+    cone_survey_site_lookup_summer_2025,
+    by = "ParentGlobalID"
+  )
+
+
+unmatched_additional_cones_summer_2025 <-
+  additional_cone_records_summer_2025 |>
+  filter(
+    is.na(Site) |
+      Site == ""
+  )
+
+
+if (nrow(unmatched_additional_cones_summer_2025) > 0) {
+  print(
+    unmatched_additional_cones_summer_2025
+  )
+
+  stop(
+    paste0(
+      nrow(unmatched_additional_cones_summer_2025),
+      " additional-tree cone record(s) did not match a parent cone survey. ",
+      "Review ParentGlobalID and GlobalID before continuing."
+    )
+  )
+}
+
+
+additional_cone_evidence_summer_2025 <-
+  additional_cone_records_summer_2025 |>
+  transmute(
+    Site,
+
+    Canopy_Crossbill_Opened_Cones =
+      as.numeric(
+        `Canopy Crossbill Opened Cones`
+      ),
+
+    Base_Crossbill_Opened_Cones =
+      as.numeric(
+        `Base Crossbill Opened Cones`
+      ),
+
+    Cone_Evidence =
+      coalesce(
+        Canopy_Crossbill_Opened_Cones,
+        0
+      ) > 0 |
+      coalesce(
+        Base_Crossbill_Opened_Cones,
+        0
+      ) > 0
+  )
+
+
+logger_cone_evidence_summer_2025 <-
+  logger_cones_summer_2025 |>
+  transmute(
+    Site = str_remove(
+      str_trim(
+        str_to_upper(
+          as.character(
+            `Survey Point ID`
+          )
+        )
+      ),
+      "-D$"
+    ),
+
+    Canopy_Crossbill_Opened_Cones =
+      as.numeric(
+        `Canopy Crossbill Forage Count`
+      ),
+
+    Base_Crossbill_Opened_Cones =
+      as.numeric(
+        `Base Crossbill Forage Count`
+      ),
+
+    Cone_Evidence =
+      coalesce(
+        Canopy_Crossbill_Opened_Cones,
+        0
+      ) > 0 |
+      coalesce(
+        Base_Crossbill_Opened_Cones,
+        0
+      ) > 0
+  )
+
+
+cone_evidence_summer_2025 <-
+  bind_rows(
+    logger_cone_evidence_summer_2025,
+    additional_cone_evidence_summer_2025
+  ) |>
+  filter(
+    !is.na(Site),
+    Site != ""
+  ) |>
+  group_by(
+    Site
+  ) |>
+  summarise(
+    Trees_With_Cone_Counts = n(),
+
+    Trees_With_Cone_Evidence = sum(
+      Cone_Evidence,
+      na.rm = TRUE
+    ),
+
+    Cone_Evidence = any(
+      Cone_Evidence,
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  )
+
+
+#### Document Summer 2025 Sites Without Cone Surveys ####
+# These sites legitimately lack cone-count records for known field reasons.
+
+cone_survey_exceptions_summer_2025 <- tibble(
+  Site = c(
+    "MAC-058",
+    "LPO-060",
+    "MAC-089"
+  ),
+
+  Cone_Survey_Status = c(
+    "Not surveyed",
+    "Not surveyed",
+    "Not applicable"
+  ),
+
+  Cone_Survey_Reason = c(
+    paste(
+      "Unauthorized camp and associated activity made it",
+      "unsafe to establish a thermologger or conduct the cone survey"
+    ),
+
+    paste(
+      "The previously deployed thermologger could not be located,",
+      "so the cone survey was not completed"
+    ),
+
+    paste(
+      "No lodgepole pine was present at the survey site,",
+      "so there were no cones to survey"
+    )
+  )
+)
+
+
+#### Check Summer 2025 Cone Coverage ####
+# Stop only when a bird-survey site lacks cone data and is not one of the documented field exceptions.
+
+bird_sites_without_cone_counts_summer_2025 <-
+  strict_summer_2025 |>
+  distinct(
+    Site
+  ) |>
+  anti_join(
+    cone_evidence_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  ) |>
+  left_join(
+    cone_survey_exceptions_summer_2025,
+    by = "Site"
+  )
+
+
+unexplained_missing_cone_sites_summer_2025 <-
+  bird_sites_without_cone_counts_summer_2025 |>
+  filter(
+    is.na(Cone_Survey_Status)
+  )
+
+
+cone_sites_without_bird_surveys_summer_2025 <-
+  cone_evidence_summer_2025 |>
+  distinct(
+    Site
+  ) |>
+  anti_join(
+    strict_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  )
+
+
+cat(
+  "Bird-survey sites without cone counts:",
+  nrow(
+    bird_sites_without_cone_counts_summer_2025
+  ),
+  "\n"
+)
+
+print(
+  bird_sites_without_cone_counts_summer_2025
+)
+
+
+cat(
+  "Unexplained bird-survey sites without cone counts:",
+  nrow(
+    unexplained_missing_cone_sites_summer_2025
+  ),
+  "\n"
+)
+
+print(
+  unexplained_missing_cone_sites_summer_2025
+)
+
+
+cat(
+  "Cone-count sites without a bird survey:",
+  nrow(
+    cone_sites_without_bird_surveys_summer_2025
+  ),
+  "\n"
+)
+
+print(
+  cone_sites_without_bird_surveys_summer_2025
+)
+
+
+if (nrow(unexplained_missing_cone_sites_summer_2025) > 0) {
+  stop(
+    paste0(
+      nrow(unexplained_missing_cone_sites_summer_2025),
+      " bird-survey site(s) lack cone data without a documented explanation. ",
+      "Review the printed site IDs before continuing."
+    )
+  )
+}
+
+
+if (nrow(cone_sites_without_bird_surveys_summer_2025) > 0) {
+  stop(
+    paste0(
+      nrow(cone_sites_without_bird_surveys_summer_2025),
+      " cone-count site(s) still do not match a bird-survey site. ",
+      "Review the printed site IDs before continuing."
+    )
+  )
+}
+
+#### Create Liberal Summer 2025 Presence Data ####
+# Liberal presence includes:
+# 1. direct CACR detection, or
+# 2. crossbill-opened cone evidence.
+#
+# Sites without a completed cone survey are classified using the strict bird-survey result only.
+
+liberal_summer_2025 <- strict_summer_2025 |>
+  left_join(
+    cone_evidence_summer_2025,
+    by = "Site"
+  ) |>
+  left_join(
+    cone_survey_exceptions_summer_2025,
+    by = "Site"
+  ) |>
+  mutate(
+    Cone_Evidence = case_when(
+      !is.na(Cone_Evidence) ~
+        Cone_Evidence,
+
+      Site %in% c(
+        "MAC-058",
+        "LPO-060",
+        "MAC-089"
+      ) ~
+        FALSE,
+
+      TRUE ~
+        NA
+    ),
+
+    Liberal_Presence = as.integer(
+      Strict_Presence == 1 |
+        Cone_Evidence
+    ),
+
+    Presence_Evidence = case_when(
+      Strict_Presence == 1 &
+        Cone_Evidence ~
+        "Detected CACR and cone evidence",
+
+      Strict_Presence == 1 &
+        Site %in% c(
+          "MAC-058",
+          "LPO-060",
+          "MAC-089"
+        ) ~
+        "Detected CACR; classified from bird survey only",
+
+      Strict_Presence == 1 ~
+        "Detected CACR only",
+
+      Cone_Evidence ~
+        "Cone evidence only",
+
+      Site == "MAC-089" ~
+        "No CACR detected; no lodgepole present",
+
+      Site %in% c(
+        "MAC-058",
+        "LPO-060"
+      ) ~
+        "No CACR detected; cone survey not completed",
+
+      TRUE ~
+        "No presence evidence"
+    )
+  ) |>
+  arrange(
+    Site
+  )
+
+#### Summarize Summer 2025 Presence Data ####
+
+cat(
+  "Total Summer 2025 survey sites:",
+  nrow(
+    liberal_summer_2025
+  ),
+  "\n"
+)
+
+cat(
+  "Strict presences:",
+  sum(
+    liberal_summer_2025$Strict_Presence == 1,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Strict absences:",
+  sum(
+    liberal_summer_2025$Strict_Presence == 0,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Liberal presences:",
+  sum(
+    liberal_summer_2025$Liberal_Presence == 1,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Liberal absences:",
+  sum(
+    liberal_summer_2025$Liberal_Presence == 0,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Liberal classifications unavailable:",
+  sum(
+    is.na(
+      liberal_summer_2025$Liberal_Presence
+    )
+  ),
+  "\n"
+)
+
+
+print(
+  liberal_summer_2025 |>
+    count(
+      Presence_Evidence,
+      name = "Sites"
+    )
+)
+
+print(liberal_summer_2025 |>
+  filter(
+    Presence_Evidence == "No presence evidence"
+  ) |>
+  select(
+    Site,
+    Strict_Presence,
+    Cone_Evidence,
+    Trees_With_Cone_Counts,
+    Trees_With_Cone_Evidence
+  ))
+
+#### QA Summer 2025 Survey Corrections and Presence Data ####
+# Confirm that all known site corrections and documented exceptions were applied correctly before saving the final strict and liberal datasets.
+
+
+#### QA 1: Confirm MAC-124 Duplicate Correction ####
+
+mac124_final_check_summer_2025 <- survey_summer_2025 |>
+  mutate(
+    Site = str_trim(
+      str_to_upper(
+        as.character(`Survey Point Number`)
+      )
+    )
+  ) |>
+  filter(
+    Site == "MAC-124"
+  ) |>
+  select(
+    `Date and Time`,
+    Site,
+    Site_Originally_Recorded,
+    Site_ID_Corrected,
+    Requires_Manual_Review,
+    x,
+    y
+  )
+
+cat(
+  "Final records labeled MAC-124:",
+  nrow(mac124_final_check_summer_2025),
+  "\n"
+)
+
+print(
+  mac124_final_check_summer_2025
+)
+
+if (nrow(mac124_final_check_summer_2025) != 1) {
+  stop(
+    paste0(
+      "Expected exactly one final survey record labeled MAC-124, but found ",
+      nrow(mac124_final_check_summer_2025),
+      ". Review the MAC-124 correction."
+    )
+  )
+}
+
+if (any(
+  survey_summer_2025$Requires_Manual_Review,
+  na.rm = TRUE
+)) {
+  print(
+    survey_summer_2025 |>
+      filter(
+        Requires_Manual_Review
+      ) |>
+      select(
+        `Date and Time`,
+        Site_Originally_Recorded,
+        `Survey Point Number`,
+        x,
+        y
+      )
+  )
+
+  stop(
+    "At least one survey-site correction still requires manual review."
+  )
+}
+
+
+#### QA 2: Confirm MAC-079 Was Corrected to MAC-072 ####
+
+cone_survey_ids_summer_2025 <- cone_survey_summer_2025 |>
+  transmute(
+    Site = str_remove(
+      str_trim(
+        str_to_upper(
+          as.character(`Survey Point ID`)
+        )
+      ),
+      "-D$"
+    )
+  )
+
+logger_cone_ids_summer_2025 <- logger_cones_summer_2025 |>
+  transmute(
+    Site = str_remove(
+      str_trim(
+        str_to_upper(
+          as.character(`Survey Point ID`)
+        )
+      ),
+      "-D$"
+    )
+  )
+
+remaining_mac079_summer_2025 <- bind_rows(
+  cone_survey_ids_summer_2025 |>
+    mutate(Source = "Cone survey"),
+
+  logger_cone_ids_summer_2025 |>
+    mutate(Source = "Logger cone survey")
+) |>
+  filter(
+    Site == "MAC-079"
+  )
+
+cat(
+  "Remaining cone records labeled MAC-079:",
+  nrow(remaining_mac079_summer_2025),
+  "\n"
+)
+
+print(
+  remaining_mac079_summer_2025
+)
+
+if (nrow(remaining_mac079_summer_2025) > 0) {
+  stop(
+    "MAC-079 still appears in the cone data. The correction to MAC-072 was not fully applied."
+  )
+}
+
+if (!"MAC-072" %in% cone_evidence_summer_2025$Site) {
+  stop(
+    "MAC-072 does not appear in the final site-level cone-evidence data."
+  )
+}
+
+
+#### QA 3: Confirm Documented Cone-Survey Exceptions ####
+
+expected_cone_exceptions_summer_2025 <- tibble(
+  Site = c(
+    "MAC-058",
+    "LPO-060",
+    "MAC-089"
+  ),
+
+  Expected_Reason = c(
+    "Unsafe unauthorized camp activity",
+    "Logger could not be located",
+    "No lodgepole pine present"
+  )
+)
+
+missing_exception_records_summer_2025 <-
+  expected_cone_exceptions_summer_2025 |>
+  anti_join(
+    cone_survey_exceptions_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  )
+
+cat(
+  "Expected exception sites missing from the exception table:",
+  nrow(missing_exception_records_summer_2025),
+  "\n"
+)
+
+print(
+  missing_exception_records_summer_2025
+)
+
+if (nrow(missing_exception_records_summer_2025) > 0) {
+  stop(
+    "One or more documented cone-survey exception sites are missing."
+  )
+}
+
+
+unexpected_exception_records_summer_2025 <-
+  cone_survey_exceptions_summer_2025 |>
+  anti_join(
+    expected_cone_exceptions_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  )
+
+cat(
+  "Unexpected sites in the cone-survey exception table:",
+  nrow(unexpected_exception_records_summer_2025),
+  "\n"
+)
+
+print(
+  unexpected_exception_records_summer_2025
+)
+
+if (nrow(unexpected_exception_records_summer_2025) > 0) {
+  stop(
+    "The cone-survey exception table contains unexpected sites."
+  )
+}
+
+
+#### QA 4: Confirm Strict-Only Classification for Exception Sites ####
+
+exception_presence_check_summer_2025 <-
+  liberal_summer_2025 |>
+  filter(
+    Site %in% c(
+      "MAC-058",
+      "LPO-060",
+      "MAC-089"
+    )
+  ) |>
+  select(
+    Site,
+    Strict_Presence,
+    Cone_Evidence,
+    Liberal_Presence,
+    Presence_Evidence,
+    Cone_Survey_Status,
+    Cone_Survey_Reason
+  )
+
+print(
+  exception_presence_check_summer_2025
+)
+
+if (nrow(exception_presence_check_summer_2025) != 3) {
+  stop(
+    paste0(
+      "Expected three documented exception sites in the liberal dataset, but found ",
+      nrow(exception_presence_check_summer_2025),
+      "."
+    )
+  )
+}
+
+incorrect_exception_classifications_summer_2025 <-
+  exception_presence_check_summer_2025 |>
+  filter(
+    is.na(Liberal_Presence) |
+      Liberal_Presence != Strict_Presence |
+      is.na(Cone_Evidence) |
+      Cone_Evidence != FALSE
+  )
+
+if (nrow(incorrect_exception_classifications_summer_2025) > 0) {
+  print(
+    incorrect_exception_classifications_summer_2025
+  )
+
+  stop(
+    paste0(
+      nrow(incorrect_exception_classifications_summer_2025),
+      " documented exception site(s) were not classified using the strict survey result only."
+    )
+  )
+}
+
+
+#### QA 5: Confirm No Unexplained Bird/Cone Mismatches Remain ####
+
+unexplained_bird_sites_without_cones_summer_2025 <-
+  strict_summer_2025 |>
+  distinct(
+    Site
+  ) |>
+  anti_join(
+    cone_evidence_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  ) |>
+  anti_join(
+    cone_survey_exceptions_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  )
+
+unmatched_cone_sites_summer_2025 <-
+  cone_evidence_summer_2025 |>
+  distinct(
+    Site
+  ) |>
+  anti_join(
+    strict_summer_2025 |>
+      distinct(
+        Site
+      ),
+    by = "Site"
+  )
+
+cat(
+  "Unexplained bird-survey sites without cone data:",
+  nrow(unexplained_bird_sites_without_cones_summer_2025),
+  "\n"
+)
+
+print(
+  unexplained_bird_sites_without_cones_summer_2025
+)
+
+cat(
+  "Cone-data sites without a bird survey:",
+  nrow(unmatched_cone_sites_summer_2025),
+  "\n"
+)
+
+print(
+  unmatched_cone_sites_summer_2025
+)
+
+if (nrow(unexplained_bird_sites_without_cones_summer_2025) > 0) {
+  stop(
+    "At least one bird-survey site lacks cone data without a documented exception."
+  )
+}
+
+if (nrow(unmatched_cone_sites_summer_2025) > 0) {
+  stop(
+    "At least one cone-data site does not match a bird-survey site."
+  )
+}
+
+
+#### QA 6: Confirm Final Presence Values Are Complete ####
+
+invalid_strict_values_summer_2025 <-
+  strict_summer_2025 |>
+  filter(
+    is.na(Strict_Presence) |
+      !Strict_Presence %in% c(
+        0L,
+        1L
+      )
+  )
+
+invalid_liberal_values_summer_2025 <-
+  liberal_summer_2025 |>
+  filter(
+    is.na(Liberal_Presence) |
+      !Liberal_Presence %in% c(
+        0L,
+        1L
+      )
+  )
+
+if (nrow(invalid_strict_values_summer_2025) > 0) {
+  print(
+    invalid_strict_values_summer_2025
+  )
+
+  stop(
+    "The strict-presence dataset contains missing or invalid values."
+  )
+}
+
+if (nrow(invalid_liberal_values_summer_2025) > 0) {
+  print(
+    invalid_liberal_values_summer_2025
+  )
+
+  stop(
+    "The liberal-presence dataset contains missing or invalid values."
+  )
+}
+
+
+#### QA 7: Confirm Liberal Presence Never Removes a Strict Presence ####
+
+strict_liberal_conflicts_summer_2025 <-
+  liberal_summer_2025 |>
+  filter(
+    Strict_Presence == 1 &
+      Liberal_Presence != 1
+  )
+
+if (nrow(strict_liberal_conflicts_summer_2025) > 0) {
+  print(
+    strict_liberal_conflicts_summer_2025
+  )
+
+  stop(
+    "At least one strict presence was not retained as a liberal presence."
+  )
+}
+
+
+cat(
+  "\nSummer 2025 survey correction and presence QA passed.\n",
+  "MAC-124 correction confirmed.\n",
+  "MAC-079 to MAC-072 correction confirmed.\n",
+  "Documented cone-survey exceptions confirmed.\n",
+  "No unexplained bird/cone site mismatches remain.\n",
+  "All strict and liberal classifications are complete 0/1 values.\n"
+)
+
+#### Save Summer 2025 Presence Data ####
+
+dir.create(
+  file.path(
+    output_dir,
+    "Presence_Data"
+  ),
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+
+write_csv(
+  strict_summer_2025,
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Strict_Presence_Summer_2025.csv"
+  )
+)
+
+
+write_csv(
+  liberal_summer_2025,
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Liberal_Presence_Summer_2025.csv"
+  )
+)
+
+cat(
+  "Saved:",
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Strict_Presence_Summer_2025.csv"
+  ),
+  "\n"
+)
+
+cat(
+  "Saved:",
+  file.path(
+    output_dir,
+    "Presence_Data",
+    "Liberal_Presence_Summer_2025.csv"
   ),
   "\n"
 )

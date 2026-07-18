@@ -898,7 +898,194 @@ write_csv(
 Removing detections over 50m would remove ~31% of the presence strict data.
 
 ```{r 2024 QA}
+#### QA 2024 Perched-Only Strict Presence ####
+# Recalculate strict presence directly from the cleaned 2024 detection records
+# and compare it with the existing strict_2024 classification.
 
+perched_check_2024 <- counts_2024 |>
+  group_by(Site) |>
+  summarise(
+    Expected_Strict_Presence = as.integer(
+      any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED",
+        na.rm = TRUE
+      )
+    ),
+    .groups = "drop"
+  ) |>
+  full_join(
+    strict_2024 |>
+      select(
+        Site,
+        Strict_Presence
+      ),
+    by = "Site"
+  ) |>
+  mutate(
+    Classification_Matches = case_when(
+      is.na(Expected_Strict_Presence) |
+        is.na(Strict_Presence) ~ FALSE,
+
+      TRUE ~
+        Expected_Strict_Presence == Strict_Presence
+    )
+  )
+
+
+perched_errors_2024 <- perched_check_2024 |>
+  filter(
+    !Classification_Matches
+  )
+
+
+cat(
+  "2024 sites with mismatched strict classifications:",
+  nrow(perched_errors_2024),
+  "\n"
+)
+
+print(
+  perched_errors_2024
+)
+
+#### QA 2024 Flyover-Only Sites ####
+# Identify sites with at least one CACR flyover but no perched CACR,
+# then confirm that they were classified as strict absences.
+
+flyover_only_check_2024 <- counts_2024 |>
+  group_by(Site) |>
+  summarise(
+    Has_CACR_Flyover = any(
+      Species == "CACR" &
+        Detection_Type == "FLYOVER",
+      na.rm = TRUE
+    ),
+
+    Has_Perched_CACR = any(
+      Species == "CACR" &
+        Detection_Type == "PERCHED",
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  ) |>
+  filter(
+    Has_CACR_Flyover,
+    !Has_Perched_CACR
+  ) |>
+  left_join(
+    strict_2024 |>
+      select(
+        Site,
+        Strict_Presence
+      ),
+    by = "Site"
+  ) |>
+  mutate(
+    Correctly_Classified =
+      !is.na(Strict_Presence) &
+        Strict_Presence == 0
+  )
+
+
+cat(
+  "2024 CACR flyover-only sites:",
+  nrow(flyover_only_check_2024),
+  "\n"
+)
+
+print(
+  flyover_only_check_2024
+)
+
+
+cat(
+  "Flyover-only sites incorrectly classified as strict presence:",
+  sum(
+    !flyover_only_check_2024$Correctly_Classified
+  ),
+  "\n"
+)
+
+#### QA 2024 Strict 50 m Classification ####
+# Independently recreate the expected 50 m classification and compare it with the values already stored in strict_2024.
+
+expected_50m_2024 <- counts_2024 |>
+  group_by(Site) |>
+  summarise(
+    Expected_Strict_Presence_50m = case_when(
+      !any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED",
+        na.rm = TRUE
+      ) ~
+        0L,
+
+      any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED" &
+          !is.na(Distance) &
+          Distance <= 50,
+        na.rm = TRUE
+      ) ~
+        1L,
+
+      any(
+        Species == "CACR" &
+          Detection_Type == "PERCHED" &
+          !is.na(Distance),
+        na.rm = TRUE
+      ) ~
+        0L,
+
+      TRUE ~
+        NA_integer_
+    ),
+
+    .groups = "drop"
+  )
+
+
+distance_check_2024 <- strict_2024 |>
+  select(
+    Site,
+    Strict_Presence_50m
+  ) |>
+  full_join(
+    expected_50m_2024,
+    by = "Site"
+  ) |>
+  mutate(
+    Classification_50m_Matches = case_when(
+      is.na(Strict_Presence_50m) &
+        is.na(Expected_Strict_Presence_50m) ~ TRUE,
+
+      is.na(Strict_Presence_50m) |
+        is.na(Expected_Strict_Presence_50m) ~ FALSE,
+
+      TRUE ~
+        Strict_Presence_50m ==
+        Expected_Strict_Presence_50m
+    )
+  )
+
+
+distance_errors_2024 <- distance_check_2024 |>
+  filter(
+    !Classification_50m_Matches
+  )
+
+
+cat(
+  "2024 sites with mismatched 50 m classifications:",
+  nrow(distance_errors_2024),
+  "\n"
+)
+
+print(
+  distance_errors_2024
+)
 ```
 
 
